@@ -176,6 +176,14 @@ def validate_r1(flows):
         "R1",
         "A3 must apply an audited SharePoint approval decision before execution",
     )
+    approval_raw = raw(flows["A3"])
+    require(
+        "SecondConfirmation" in approval_raw
+        and "RequiresSecondConfirmation" in approval_raw
+        and "Confirmed" in approval_raw,
+        "R1/C5",
+        "large plans must require a second explicit confirmation",
+    )
     require(
         list(triggers(flows["B"]).values())[0].get("type") == "Recurrence",
         "R1",
@@ -189,6 +197,12 @@ def validate_r1(flows):
         == 1,
         "R1/C4",
         "Flow B trigger concurrency must be one to prevent duplicate claims",
+    )
+    require(
+        bool(find_action(flows["B"], "Get_approved_run"))
+        and bool(find_action(flows["B"], "Get_rollback_lock")),
+        "R1/R7",
+        "Flow B must resume Running before Approved and stop during rollback",
     )
     planner_trigger = list(triggers(flows["A2"]).values())[0]
     require(
@@ -283,6 +297,12 @@ def validate_r2(flows):
         bool(find_action(flows["E2"], "Get_unfinished_frontier_row")),
         "R2",
         "reconciliation must prove no fresh InProgress frontier row remains",
+    )
+    require(
+        bool(find_action(flows["E1"], "Mark_walk_running"))
+        and "Seeding" in raw(flows["E1"]),
+        "R2",
+        "a walk must not become consumable until its root frontier is seeded",
     )
     require(
         bool(find_action(flows["E2"], "Get_stale_index_chunk"))
@@ -574,6 +594,15 @@ def validate_r7(flows, lists):
         ),
         "R7/C2",
         "rollback must consume manifests through a bounded persisted cursor",
+    )
+    terminal_page = find_action(flows["C"], "Get_terminal_page")
+    require(
+        terminal_page.get("inputs", {})
+        .get("parameters", {})
+        .get("$select")
+        == "ID,Status",
+        "R7/C2",
+        "paged finalization must not retrieve large manifest Note fields",
     )
 
 

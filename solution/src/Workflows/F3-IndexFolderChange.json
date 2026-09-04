@@ -119,7 +119,7 @@
                       "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
                       "item/Title": "@outputs('Compose_walk_run_id')",
                       "item/WalkRunId": "@outputs('Compose_walk_run_id')",
-                      "item/Status/Value": "@{if(equals(length(body('Get_active_walk')?['value']), 0), 'Running', 'Queued')}",
+                      "item/Status/Value": "@{if(equals(length(body('Get_active_walk')?['value']), 0), 'Seeding', 'Queued')}",
                       "item/ReconciliationCursorId": 0,
                       "item/StartedAt": "@utcNow()",
                       "item/ErrorMessage": ""
@@ -173,6 +173,57 @@
                       "item/FolderUniqueId": "@body('Get_root_folder_identity')?['d']?['UniqueId']",
                       "item/Depth": 0,
                       "item/Status/Value": "Pending"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Activate_seeded_walk": {
+                  "runAfter": {
+                    "Seed_root_frontier": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "id": "@body('Create_walk_run')?['ID']",
+                      "item/Status/Value": "@{if(equals(length(body('Get_active_walk')?['value']), 0), 'Running', 'Queued')}"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Record_seed_failure": {
+                  "runAfter": {
+                    "Get_root_folder_identity": [
+                      "Failed",
+                      "TimedOut"
+                    ],
+                    "Seed_root_frontier": [
+                      "Failed",
+                      "TimedOut"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "id": "@body('Create_walk_run')?['ID']",
+                      "item/Status/Value": "CompletedWithErrors",
+                      "item/CompletedAt": "@utcNow()",
+                      "item/ErrorMessage": "Folder-change reconciliation could not seed its root frontier."
                     },
                     "authentication": "@parameters('$authentication')"
                   }

@@ -613,6 +613,7 @@ def build_a2():
                                         "id": "@first(body('Get_planning_run')?['value'])?['ID']",
                                         "item/Status/Value": "AwaitingApproval",
                                         "item/ApprovalDecision/Value": "Pending",
+                                        "item/SecondConfirmation/Value": "@{if(greater(int(first(body('Get_planning_run')?['value'])?['PlannedCount']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)'))), 'Pending', 'NotRequired')}",
                                         "item/RequiresSecondConfirmation": "@greater(int(first(body('Get_planning_run')?['value'])?['PlannedCount']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')))",
                                     },
                                     description=(
@@ -808,23 +809,43 @@ def build_a3():
                         ]
                     },
                     {
+                        "equals": [
+                            "@length(body('Get_newer_index_walk')?['value'])",
+                            0,
+                        ]
+                    },
+                    {
                         "or": [
                             {
                                 "equals": [
                                     "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
-                                    "Approved",
-                                ]
-                            },
-                            {
-                                "equals": [
-                                    "@length(body('Get_newer_index_walk')?['value'])",
-                                    0,
-                                ]
-                            },
-                            {
-                                "equals": [
-                                    "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
                                     "Rejected",
+                                ]
+                            },
+                            {
+                                "and": [
+                                    {
+                                        "equals": [
+                                            "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
+                                            "Approved",
+                                        ]
+                                    },
+                                    {
+                                        "or": [
+                                            {
+                                                "equals": [
+                                                    "@triggerOutputs()?['body/RequiresSecondConfirmation']",
+                                                    False,
+                                                ]
+                                            },
+                                            {
+                                                "equals": [
+                                                    "@triggerOutputs()?['body/SecondConfirmation']?['Value']",
+                                                    "Confirmed",
+                                                ]
+                                            },
+                                        ]
+                                    },
                                 ]
                             },
                         ]

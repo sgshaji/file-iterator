@@ -102,7 +102,7 @@
                     "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
                     "item/Title": "@variables('WalkRunId')",
                     "item/WalkRunId": "@variables('WalkRunId')",
-                    "item/Status/Value": "Running",
+                    "item/Status/Value": "Seeding",
                     "item/ReconciliationCursorId": 0,
                     "item/StartedAt": "@utcNow()",
                     "item/ErrorMessage": ""
@@ -150,6 +150,24 @@
                   "authentication": "@parameters('$authentication')"
                 },
                 "description": "One row. Flow E2 expands it breadth-first from here."
+              },
+              "Mark_walk_running": {
+                "runAfter": { "Seed_frontier_with_root_folder": ["Succeeded"] },
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PatchItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                    "id": "@body('Create_walk_run')?['ID']",
+                    "item/Status/Value": "Running"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
               },
               "Record_root_identity_failure": {
                 "runAfter": { "Get_root_folder_identity": ["Failed", "TimedOut"] },

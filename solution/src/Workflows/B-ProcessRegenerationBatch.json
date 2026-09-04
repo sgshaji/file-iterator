@@ -128,25 +128,45 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "$filter": "(Status eq 'Approved' or Status eq 'Running') and IsDryRun eq 0",
+              "$filter": "Status eq 'Running' and IsDryRun eq 0",
               "$orderby": "Created asc",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"
           },
-          "description": "Only an approved, non-dry-run run is executable. One run at a time, oldest first - concurrent runs would compete for the same agent capacity and make cost unpredictable."
+          "description": "Resume an existing Running run before any Approved run. This preserves execution order and makes LIFO rollback match actual write order."
         },
         "Exit_if_no_active_run": {
           "runAfter": {
-            "Get_active_run": [
+            "Get_rollback_lock": [
               "Succeeded"
             ]
           },
           "type": "If",
           "expression": {
-            "equals": [
-              "@length(body('Get_active_run')?['value'])",
-              0
+            "or": [
+              {
+                "greater": [
+                  "@length(body('Get_rollback_lock')?['value'])",
+                  0
+                ]
+              },
+              {
+                "and": [
+                  {
+                    "equals": [
+                      "@length(body('Get_active_run')?['value'])",
+                      0
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@length(body('Get_approved_run')?['value'])",
+                      0
+                    ]
+                  }
+                ]
+              }
             ]
           },
           "actions": {
@@ -174,7 +194,7 @@
               {
                 "name": "ActiveRunId",
                 "type": "string",
-                "value": "@{first(body('Get_active_run')?['value'])?['RunId']}"
+                "value": "@{if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['RunId'], first(body('Get_approved_run')?['value'])?['RunId'])}"
               }
             ]
           }
@@ -230,7 +250,7 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "id": "@first(body('Get_active_run')?['value'])?['ID']",
+              "id": "@{if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['ID'], first(body('Get_approved_run')?['value'])?['ID'])}",
               "item/Status/Value": "Running"
             },
             "authentication": "@parameters('$authentication')"
@@ -382,8 +402,8 @@
                           "parameters": {
                             "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                             "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                            "id": "@first(body('Get_active_run')?['value'])?['ID']",
-                            "item/AgentCallCount": "@add(int(coalesce(first(body('Get_active_run')?['value'])?['AgentCallCount'], 0)), variables('AgentCallsThisBatch'))"
+                            "id": "@{if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['ID'], first(body('Get_approved_run')?['value'])?['ID'])}",
+                            "item/AgentCallCount": "@add(int(coalesce(if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['AgentCallCount'], first(body('Get_approved_run')?['value'])?['AgentCallCount']), 0)), variables('AgentCallsThisBatch'))"
                           },
                           "authentication": "@parameters('$authentication')"
                         },
@@ -813,12 +833,57 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "id": "@first(body('Get_active_run')?['value'])?['ID']",
-              "item/AgentCallCount": "@add(int(coalesce(first(body('Get_active_run')?['value'])?['AgentCallCount'], 0)), variables('AgentCallsThisBatch'))"
+              "id": "@{if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['ID'], first(body('Get_approved_run')?['value'])?['ID'])}",
+              "item/AgentCallCount": "@add(int(coalesce(if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['AgentCallCount'], first(body('Get_approved_run')?['value'])?['AgentCallCount']), 0)), variables('AgentCallsThisBatch'))"
             },
             "authentication": "@parameters('$authentication')"
           },
           "description": "HEADLINE COST METRIC. Flow C reports this against PlannedCount. If agent calls approach the full document count on every run, the cost filters in Flow A are not working, and that - not the flow logic - is where to look."
+        },
+        "Get_approved_run": {
+          "runAfter": {
+            "Get_active_run": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "$filter": "Status eq 'Approved' and IsDryRun eq 0",
+              "$orderby": "Created asc",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Get_rollback_lock": {
+          "runAfter": {
+            "Get_approved_run": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "$filter": "Status eq 'RollbackInProgress'",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
         }
       },
       "outputs": {}

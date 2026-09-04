@@ -453,11 +453,102 @@ def expected_text():
     properties["connectionReferences"]["shared_agentnode"] = AGENT_CONNECTION
     trigger = properties["definition"]["triggers"]["Recurrence"]
     trigger["runtimeConfiguration"] = {"concurrency": {"runs": 1}}
+    root = properties["definition"]["actions"]
+    active = root["Get_active_run"]
+    active["inputs"]["parameters"]["$filter"] = (
+        "Status eq 'Running' and IsDryRun eq 0"
+    )
+    active["description"] = (
+        "Resume an existing Running run before any Approved run. This preserves "
+        "execution order and makes LIFO rollback match actual write order."
+    )
+    root["Get_approved_run"] = {
+        "runAfter": {"Get_active_run": ["Succeeded"]},
+        "type": "OpenApiConnection",
+        "inputs": {
+            "host": {
+                "connectionName": "shared_sharepointonline",
+                "operationId": "GetItems",
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+            },
+            "parameters": {
+                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                "$filter": "Status eq 'Approved' and IsDryRun eq 0",
+                "$orderby": "Created asc",
+                "$top": 1,
+            },
+            "authentication": "@parameters('$authentication')",
+        },
+    }
+    root["Get_rollback_lock"] = {
+        "runAfter": {"Get_approved_run": ["Succeeded"]},
+        "type": "OpenApiConnection",
+        "inputs": {
+            "host": {
+                "connectionName": "shared_sharepointonline",
+                "operationId": "GetItems",
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+            },
+            "parameters": {
+                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                "$filter": "Status eq 'RollbackInProgress'",
+                "$top": 1,
+            },
+            "authentication": "@parameters('$authentication')",
+        },
+    }
+    exit_action = root["Exit_if_no_active_run"]
+    exit_action["runAfter"] = {"Get_rollback_lock": ["Succeeded"]}
+    exit_action["expression"] = {
+        "or": [
+            {"greater": ["@length(body('Get_rollback_lock')?['value'])", 0]},
+            {
+                "and": [
+                    {"equals": ["@length(body('Get_active_run')?['value'])", 0]},
+                    {
+                        "equals": [
+                            "@length(body('Get_approved_run')?['value'])",
+                            0,
+                        ]
+                    },
+                ]
+            },
+        ]
+    }
+    root["Init_ActiveRunId"]["inputs"]["variables"][0]["value"] = (
+        "@{if(greater(length(body('Get_active_run')?['value']), 0), "
+        "first(body('Get_active_run')?['value'])?['RunId'], "
+        "first(body('Get_approved_run')?['value'])?['RunId'])}"
+    )
+    selected_id = (
+        "@{if(greater(length(body('Get_active_run')?['value']), 0), "
+        "first(body('Get_active_run')?['value'])?['ID'], "
+        "first(body('Get_approved_run')?['value'])?['ID'])}"
+    )
+    root["Mark_run_running"]["inputs"]["parameters"]["id"] = selected_id
+    selected_count = (
+        "@add(int(coalesce(if(greater(length(body('Get_active_run')?['value']), 0), "
+        "first(body('Get_active_run')?['value'])?['AgentCallCount'], "
+        "first(body('Get_approved_run')?['value'])?['AgentCallCount']), 0)), "
+        "variables('AgentCallsThisBatch'))"
+    )
+    root["Roll_up_agent_call_count"]["inputs"]["parameters"]["id"] = selected_id
+    root["Roll_up_agent_call_count"]["inputs"]["parameters"][
+        "item/AgentCallCount"
+    ] = selected_count
     process = (
         properties["definition"]["actions"]["For_each_work_item"]["actions"]
         ["Skip_if_backpressure"]["else"]["actions"]["Process_document"]
     )
     process["actions"] = PROCESS_ACTIONS
+    process["actions"]["Persist_agent_call_count"]["inputs"]["parameters"][
+        "id"
+    ] = selected_id
+    process["actions"]["Persist_agent_call_count"]["inputs"]["parameters"][
+        "item/AgentCallCount"
+    ] = selected_count
     return json.dumps(flow, indent=2, ensure_ascii=True) + "\n"
 
 

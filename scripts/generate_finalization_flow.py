@@ -131,6 +131,7 @@ def build():
                         "table": work_list,
                         "$filter": "RunId eq '@{first(body('Get_run_to_advance')?['value'])?['RunId']}' and ID gt @{int(coalesce(first(body('Get_run_to_advance')?['value'])?['FinalizationCursorId'], 0))}",
                         "$orderby": "ID asc",
+                        "$select": "ID,Status",
                         "$top": 500,
                     },
                     description=(

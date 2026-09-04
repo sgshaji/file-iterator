@@ -87,23 +87,43 @@
                 ]
               },
               {
+                "equals": [
+                  "@length(body('Get_newer_index_walk')?['value'])",
+                  0
+                ]
+              },
+              {
                 "or": [
                   {
                     "equals": [
                       "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
-                      "Approved"
-                    ]
-                  },
-                  {
-                    "equals": [
-                      "@length(body('Get_newer_index_walk')?['value'])",
-                      0
-                    ]
-                  },
-                  {
-                    "equals": [
-                      "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
                       "Rejected"
+                    ]
+                  },
+                  {
+                    "and": [
+                      {
+                        "equals": [
+                          "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
+                          "Approved"
+                        ]
+                      },
+                      {
+                        "or": [
+                          {
+                            "equals": [
+                              "@triggerOutputs()?['body/RequiresSecondConfirmation']",
+                              false
+                            ]
+                          },
+                          {
+                            "equals": [
+                              "@triggerOutputs()?['body/SecondConfirmation']?['Value']",
+                              "Confirmed"
+                            ]
+                          }
+                        ]
+                      }
                     ]
                   }
                 ]

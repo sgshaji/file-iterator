@@ -458,6 +458,7 @@
                           "id": "@first(body('Get_planning_run')?['value'])?['ID']",
                           "item/Status/Value": "AwaitingApproval",
                           "item/ApprovalDecision/Value": "Pending",
+                          "item/SecondConfirmation/Value": "@{if(greater(int(first(body('Get_planning_run')?['value'])?['PlannedCount']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)'))), 'Pending', 'NotRequired')}",
                           "item/RequiresSecondConfirmation": "@greater(int(first(body('Get_planning_run')?['value'])?['PlannedCount']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')))"
                         },
                         "authentication": "@parameters('$authentication')"
