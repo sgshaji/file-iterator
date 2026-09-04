@@ -53,8 +53,32 @@
         }
       },
       "actions": {
-        "Get_newer_index_walk": {
+        "Get_authoritative_work_item_count": {
           "runAfter": {},
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "HttpRequest",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "parameters/method": "GET",
+              "parameters/uri": "_api/web/lists/getbytitle('@{replace(parameters('fi_WorkItemListName (fi_WorkItemListName)'),'''','''''')}')/items?$select=ID&$filter=RunId eq '@{replace(triggerOutputs()?['body/RunId'],'''','''''')}'&$top=1&$inlinecount=allpages",
+              "parameters/headers": {
+                "Accept": "application/json;odata=verbose"
+              }
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Get_newer_index_walk": {
+          "runAfter": {
+            "Get_authoritative_work_item_count": [
+              "Succeeded"
+            ]
+          },
           "type": "OpenApiConnection",
           "inputs": {
             "host": {
@@ -111,9 +135,9 @@
                       {
                         "or": [
                           {
-                            "equals": [
-                              "@triggerOutputs()?['body/RequiresSecondConfirmation']",
-                              false
+                            "lessOrEquals": [
+                              "@int(body('Get_authoritative_work_item_count')?['d']?['__count'])",
+                              "@int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)'))"
                             ]
                           },
                           {
@@ -145,7 +169,9 @@
                   "table": "@parameters('fi_RunListName (fi_RunListName)')",
                   "id": "@triggerOutputs()?['body/ID']",
                   "item/Status/Value": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), 'Approved', 'Cancelled')}",
-                  "item/ApprovedBy": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), triggerOutputs()?['body/Editor/Email'], '')}"
+                  "item/ApprovedBy": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), triggerOutputs()?['body/Editor/Email'], '')}",
+                  "item/PlannedCount": "@int(body('Get_authoritative_work_item_count')?['d']?['__count'])",
+                  "item/RequiresSecondConfirmation": "@greater(int(body('Get_authoritative_work_item_count')?['d']?['__count']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')))"
                 },
                 "authentication": "@parameters('$authentication')"
               }

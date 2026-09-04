@@ -378,7 +378,7 @@ The report's §4.1 finding governs: the 5,000-item threshold applies to items Sh
 
 | # | Change | Rationale |
 |---|---|---|
-| I1 | **One call per folder**, using `?$expand=Folders,Files`, instead of separate `/Files` and `/Folders` calls | Halves call count and throttling exposure (C3). Report §6.7 verified this endpoint at 27k but classified it "building block only" for not being recursive — non-recursive is exactly what the walk wants. |
+| I1 | **Persisted pagination of separate `/Folders` and `/Files` collections** | Each worker pass consumes one direct-child page and stores SharePoint's continuation URL plus collection phase on the frontier row. This remains non-recursive while covering a folder with more than 5,000 direct children without an unbounded action output. |
 | I2 | **`GetFolderByServerRelativePath(decodedurl='...')`** instead of `...ByServerRelativeUrl` | The Url variant fails on `#` and `%`. Report raises this only as open question Q5; in an HR library such names are near-certain. Adopted as default rather than discovered during customer testing. |
 | I3 | **Frontier persisted in a list**, not an array variable | Makes the walk resumable, observable, and immune to the 16 MB cap (C2). The report's §9.7 names the variable as a known limitation. |
 | I4 | **Chunked execution** — process a bounded number of folders per run, then re-queue and exit | No single run approaches the duration limit, whatever the tree size. |

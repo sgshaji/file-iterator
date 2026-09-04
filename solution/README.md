@@ -22,8 +22,8 @@ proven invocation is `shared_agentnode` / `InvokeAgent` with
   cap.
 - Paged finalization counts.
 - LIFO, paged rollback from the agent's archive manifests.
-- Direct-children-only index backfill with persisted frontier, stale-claim
-  recovery and post-walk deletion reconciliation.
+- Direct-children-only index backfill with persisted folder/file continuation
+  state, stale-claim recovery and post-walk deletion reconciliation.
 - File create/modify/rename/delete and folder delete/rename/move handling.
 - Generated Power Platform metadata and deployment settings.
 
@@ -72,9 +72,11 @@ When A2 finishes planning a live run, the `RegenerationRun` item moves to
 
 A reviewer inspects `PlannedCount`, `RequiresSecondConfirmation` and the
 persisted work items, then changes `ApprovalDecision` to `Approved` or
-`Rejected`. When `RequiresSecondConfirmation=true`, the reviewer must also set
-`SecondConfirmation=Confirmed`. A3 records the editor as `ApprovedBy` and moves
-the run to `Approved` or `Cancelled`.
+`Rejected`. A3 recounts the persisted work items and derives the circuit
+breaker from that authoritative count; reviewers cannot bypass it by editing
+run metadata. When the count exceeds `fi_MaxDocumentsPerRun`, the reviewer must
+also set `SecondConfirmation=Confirmed`. A3 records the editor as `ApprovedBy`
+and moves the run to `Approved` or `Cancelled`.
 
 ## Validation
 

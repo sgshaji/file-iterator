@@ -187,7 +187,15 @@
               </CHOICES>
               <Default>Pending</Default>
             </Field>
-            <Field ID="{63b323d2-c67a-430b-a25d-3e7d40e5343e}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Recorded when a folder cannot be enumerated, e.g. a single folder with more than 5,000 direct children throttling its own call." />
+            <Field ID="{f3547849-2446-506f-864d-fb7cf0b80533}" Name="EnumerationPhase" StaticName="EnumerationPhase" DisplayName="EnumerationPhase" Type="Choice" Required="TRUE" Description="The direct-child collection whose next page must be consumed. Folders are completed before files.">
+              <CHOICES>
+                <CHOICE>Folders</CHOICE>
+                <CHOICE>Files</CHOICE>
+              </CHOICES>
+              <Default>Folders</Default>
+            </Field>
+            <Field ID="{c229a32c-8a2b-557e-881a-5561eda0107c}" Name="NextPageUri" StaticName="NextPageUri" DisplayName="NextPageUri" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="SharePoint REST continuation URL for the current direct-child collection. Empty means start the current phase at its first page." />
+            <Field ID="{63b323d2-c67a-430b-a25d-3e7d40e5343e}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Recorded when one direct-child page cannot be enumerated or processed." />
             <Field ID="{e6719fbd-6d70-4af2-83bf-f5ee08ee2869}" Name="VisitedAt" StaticName="VisitedAt" DisplayName="VisitedAt" Type="DateTime" Required="FALSE" />
           </pnp:Fields>
         </pnp:ListInstance>

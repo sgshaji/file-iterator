@@ -784,6 +784,23 @@ def build_a3():
         }
     }
     actions = {
+        "Get_authoritative_work_item_count": sharepoint(
+            "HttpRequest",
+            {
+                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                "parameters/method": "GET",
+                "parameters/uri": (
+                    "_api/web/lists/getbytitle('@{replace(parameters("
+                    "'fi_WorkItemListName (fi_WorkItemListName)'),'''','''''')}')"
+                    "/items?$select=ID&$filter=RunId eq "
+                    "'@{replace(triggerOutputs()?['body/RunId'],'''','''''')}'"
+                    "&$top=1&$inlinecount=allpages"
+                ),
+                "parameters/headers": {
+                    "Accept": "application/json;odata=verbose"
+                },
+            },
+        ),
         "Get_newer_index_walk": sharepoint(
             "GetItems",
             {
@@ -795,6 +812,7 @@ def build_a3():
                 ),
                 "$top": 1,
             },
+            run_after={"Get_authoritative_work_item_count": ["Succeeded"]},
         ),
         "Apply_approval_decision": {
             "runAfter": {"Get_newer_index_walk": ["Succeeded"]},
@@ -832,9 +850,9 @@ def build_a3():
                                     {
                                         "or": [
                                             {
-                                                "equals": [
-                                                    "@triggerOutputs()?['body/RequiresSecondConfirmation']",
-                                                    False,
+                                                "lessOrEquals": [
+                                                    "@int(body('Get_authoritative_work_item_count')?['d']?['__count'])",
+                                                    "@int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)'))",
                                                 ]
                                             },
                                             {
@@ -859,6 +877,8 @@ def build_a3():
                         "id": "@triggerOutputs()?['body/ID']",
                         "item/Status/Value": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), 'Approved', 'Cancelled')}",
                         "item/ApprovedBy": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), triggerOutputs()?['body/Editor/Email'], '')}",
+                        "item/PlannedCount": "@int(body('Get_authoritative_work_item_count')?['d']?['__count'])",
+                        "item/RequiresSecondConfirmation": "@greater(int(body('Get_authoritative_work_item_count')?['d']?['__count']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')))",
                     }
                 )
             },

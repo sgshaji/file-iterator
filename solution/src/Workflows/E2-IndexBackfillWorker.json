@@ -337,7 +337,7 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "parameters/method": "GET",
-                  "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{replace(items('For_each_folder')?['FolderUrl'],'''','''''')}')?$expand=Folders,Files,Files/ListItemAllFields&$select=Name,UniqueId,ServerRelativeUrl,Folders/Name,Folders/UniqueId,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/UniqueId,Files/Length,Files/TimeLastModified,Files/ListItemAllFields/ID",
+                  "parameters/uri": "@{if(not(empty(items('For_each_folder')?['NextPageUri'])), replace(items('For_each_folder')?['NextPageUri'], parameters('fi_SiteAddress (fi_SiteAddress)'), ''), if(equals(coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'), 'Folders'), concat('_api/web/GetFolderByServerRelativePath(decodedurl=''', replace(items('For_each_folder')?['FolderUrl'],'''',''''''), ''')/Folders?$select=Name,UniqueId,ServerRelativeUrl&$top=5000'), concat('_api/web/GetFolderByServerRelativePath(decodedurl=''', replace(items('For_each_folder')?['FolderUrl'],'''',''''''), ''')/Files?$expand=ListItemAllFields&$select=Name,ServerRelativeUrl,UniqueId,Length,TimeLastModified,ListItemAllFields/ID&$top=5000')))}",
                   "parameters/headers": { "Accept": "application/json;odata=verbose" }
                 },
                 "authentication": "@parameters('$authentication')"
@@ -345,7 +345,7 @@
               "runtimeConfiguration": {
                 "staticResult": { "staticResultOptions": "Disabled" }
               },
-              "description": "THE CORE CALL. Direct children only - this uses the folder's internal index and therefore succeeds regardless of library size. A recursive request over the same path would be a full-library scan and would throw SPQueryThrottledException (investigation report section 4.1). $expand returns folders and files in ONE call rather than two (improvement I1). GetFolderByServerRelativePath tolerates # and % in folder names, which the ...ByServerRelativeUrl variant does not (improvement I2). Type plain spaces in this Uri - Power Automate encodes the field, and a pre-encoded %20 becomes %2520 and silently drops the query string (investigation report section 13, lesson 4)."
+              "description": "THE CORE CALL. Consume exactly one direct-child page for the persisted Folders or Files phase. SharePoint's __next URL is stored on the frontier row, so a folder with more than 5,000 direct children resumes on the next scheduled worker run without recursive enumeration or an unbounded action output."
             },
             "Scope_index_children": {
               "runAfter": { "Enumerate_direct_children": ["Succeeded"] },
@@ -355,7 +355,7 @@
                   "runAfter": {},
                   "type": "Query",
                   "inputs": {
-                    "from": "@body('Enumerate_direct_children')?['d']?['Files']?['results']",
+                    "from": "@if(equals(coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'), 'Files'), body('Enumerate_direct_children')?['d']?['results'], json('[]'))",
                     "where": "@contains(variables('SourceExtensions'), toLower(concat('.', last(split(item()?['Name'], '.')))))"
                   }
                 },
@@ -490,7 +490,7 @@
                   "runAfter": { "For_each_file": ["Succeeded"] },
                   "type": "Query",
                   "inputs": {
-                    "from": "@body('Enumerate_direct_children')?['d']?['Folders']?['results']",
+                    "from": "@if(equals(coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'), 'Folders'), body('Enumerate_direct_children')?['d']?['results'], json('[]'))",
                     "where": "@and(not(contains(variables('ExcludedFolders'), toLower(item()?['Name']))), not(equals(toLower(item()?['Name']), 'forms')))"
                   },
                   "description": "Exclusions are applied BEFORE enqueueing, so an excluded subtree is never requested at all - a subtree of any size costs nothing. 'Forms' is SharePoint's own hidden folder present in every library."
@@ -518,7 +518,9 @@
                           "item/FolderUrl": "@items('For_each_child_folder')?['ServerRelativeUrl']",
                           "item/FolderUniqueId": "@items('For_each_child_folder')?['UniqueId']",
                           "item/Depth": "@add(int(items('For_each_folder')?['Depth']), 1)",
-                          "item/Status/Value": "Pending"
+                          "item/Status/Value": "Pending",
+                          "item/EnumerationPhase/Value": "Folders",
+                          "item/NextPageUri": ""
                         },
                         "authentication": "@parameters('$authentication')"
                       },
@@ -539,8 +541,11 @@
                       "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                       "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
                       "id": "@items('For_each_folder')?['ID']",
-                      "item/Status/Value": "Visited",
-                      "item/VisitedAt": "@utcNow()"
+                      "item/Status/Value": "@{if(and(equals(coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'), 'Files'), empty(body('Enumerate_direct_children')?['d']?['__next'])), 'Visited', 'Pending')}",
+                      "item/EnumerationPhase/Value": "@{if(and(equals(coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'), 'Folders'), empty(body('Enumerate_direct_children')?['d']?['__next'])), 'Files', coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'))}",
+                      "item/NextPageUri": "@{coalesce(body('Enumerate_direct_children')?['d']?['__next'], '')}",
+                      "item/VisitedAt": "@{if(and(equals(coalesce(items('For_each_folder')?['EnumerationPhase']?['Value'], 'Folders'), 'Files'), empty(body('Enumerate_direct_children')?['d']?['__next'])), utcNow(), null)}",
+                      "item/ErrorMessage": ""
                     },
                     "authentication": "@parameters('$authentication')"
                   }
@@ -585,7 +590,7 @@
                 },
                 "authentication": "@parameters('$authentication')"
               },
-              "description": "One folder's failure must never abort the chunk. The most likely cause is a single folder holding more than 5,000 direct children, which throttles its own call; that folder needs splitting or an indexed column."
+              "description": "One folder page's failure must never abort the chunk. The persisted phase and continuation URL allow the stale claim to resume the same page."
             }
           }
         }

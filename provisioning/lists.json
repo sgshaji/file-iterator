@@ -93,7 +93,9 @@
         { "name": "FolderUniqueId", "type": "Text", "required": true, "description": "SharePoint folder GUID copied to child index rows as ParentFolderUniqueId." },
         { "name": "Depth", "type": "Number", "required": false, "description": "Depth below the root folder. Supports breadth-first ordering." },
         { "name": "Status", "type": "Choice", "required": true, "indexed": true, "choices": ["Pending", "InProgress", "Visited", "Failed"], "defaultValue": "Pending", "description": "Queried every chunk, so it must be indexed." },
-        { "name": "ErrorMessage", "type": "Note", "required": false, "description": "Recorded when a folder cannot be enumerated, e.g. a single folder with more than 5,000 direct children throttling its own call." },
+        { "name": "EnumerationPhase", "type": "Choice", "required": true, "choices": ["Folders", "Files"], "defaultValue": "Folders", "description": "The direct-child collection whose next page must be consumed. Folders are completed before files." },
+        { "name": "NextPageUri", "type": "Note", "required": false, "description": "SharePoint REST continuation URL for the current direct-child collection. Empty means start the current phase at its first page." },
+        { "name": "ErrorMessage", "type": "Note", "required": false, "description": "Recorded when one direct-child page cannot be enumerated or processed." },
         { "name": "VisitedAt", "type": "DateTime", "required": false }
       ]
     },

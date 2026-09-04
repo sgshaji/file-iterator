@@ -177,12 +177,28 @@ def validate_r1(flows):
         "A3 must apply an audited SharePoint approval decision before execution",
     )
     approval_raw = raw(flows["A3"])
+    authoritative_count = find_action(
+        flows["A3"], "Get_authoritative_work_item_count"
+    )
+    authoritative_count_uri = str(
+        authoritative_count.get("inputs", {})
+        .get("parameters", {})
+        .get("parameters/uri", "")
+    )
+    approval_gate = find_action(flows["A3"], "Apply_approval_decision")
+    approval_gate_text = json.dumps(approval_gate.get("expression", {}))
     require(
-        "SecondConfirmation" in approval_raw
-        and "RequiresSecondConfirmation" in approval_raw
-        and "Confirmed" in approval_raw,
+        bool(authoritative_count)
+        and "$inlinecount=allpages" in authoritative_count_uri
+        and "$filter=RunId eq" in authoritative_count_uri
+        and "triggerOutputs()?['body/RunId']" in authoritative_count_uri
+        and "Get_authoritative_work_item_count" in approval_gate_text
+        and "fi_MaxDocumentsPerRun" in approval_gate_text
+        and "SecondConfirmation" in approval_gate_text
+        and "Confirmed" in approval_gate_text
+        and "RequiresSecondConfirmation" not in approval_gate_text,
         "R1/C5",
-        "large plans must require a second explicit confirmation",
+        "large-plan confirmation must be derived from persisted work items, not editable run metadata",
     )
     require(
         list(triggers(flows["B"]).values())[0].get("type") == "Recurrence",
@@ -198,11 +214,53 @@ def validate_r1(flows):
         "R1/C4",
         "Flow B trigger concurrency must be one to prevent duplicate claims",
     )
+    approved = find_action(flows["B"], "Get_approved_run")
+    rollback_lock = find_action(flows["B"], "Get_rollback_lock")
+    newer_walk = find_action(
+        flows["B"], "Get_newer_index_walk_for_approved_run"
+    )
+    cancel_stale = find_action(flows["B"], "Cancel_stale_approved_run")
+    exit_no_run = find_action(flows["B"], "Exit_if_no_active_run")
+    init_active = find_action(flows["B"], "Init_ActiveRunId")
+    init_calls = find_action(flows["B"], "Init_AgentCalls")
+    init_backpressure = find_action(flows["B"], "Init_Backpressure")
+    mark_running = find_action(flows["B"], "Mark_run_running")
+    newer_walk_filter = str(
+        newer_walk.get("inputs", {}).get("parameters", {}).get("$filter", "")
+    )
     require(
-        bool(find_action(flows["B"], "Get_approved_run"))
-        and bool(find_action(flows["B"], "Get_rollback_lock")),
+        bool(approved)
+        and bool(rollback_lock)
+        and "ID gt" in newer_walk_filter
+        and "IndexSnapshotItemId" in newer_walk_filter
+        and newer_walk.get("runAfter") == {
+            "Get_rollback_lock": ["Succeeded"]
+        }
+        and cancel_stale.get("runAfter") == {
+            "Get_newer_index_walk_for_approved_run": ["Succeeded"]
+        }
+        and exit_no_run.get("runAfter") == {
+            "Cancel_stale_approved_run": ["Succeeded"]
+        }
+        and init_active.get("runAfter") == {
+            "Exit_if_no_active_run": ["Succeeded"]
+        }
+        and init_calls.get("runAfter") == {
+            "Init_ActiveRunId": ["Succeeded"]
+        }
+        and init_backpressure.get("runAfter") == {
+            "Init_AgentCalls": ["Succeeded"]
+        }
+        and mark_running.get("runAfter") == {
+            "Init_Backpressure": ["Succeeded"]
+        }
+        and "Get_active_run" in json.dumps(cancel_stale.get("expression", {}))
+        and "Get_approved_run" in json.dumps(cancel_stale.get("expression", {}))
+        and "Get_newer_index_walk_for_approved_run"
+        in json.dumps(cancel_stale.get("expression", {}))
+        and bool(find_action(flows["B"], "Cancel_stale_approved_plan")),
         "R1/R7",
-        "Flow B must resume Running before Approved and stop during rollback",
+        "Flow B must resume Running before Approved, stop during rollback, and reject an approved stale snapshot",
     )
     planner_trigger = list(triggers(flows["A2"]).values())[0]
     require(
@@ -272,9 +330,27 @@ def validate_r2(flows):
     )
     require(
         "GetFolderByServerRelativePath" in uri
-        and "$expand=Folders,Files" in uri,
+        and "/Folders?" in uri
+        and "/Files?" in uri
+        and "$top=5000" in uri
+        and "NextPageUri" in uri,
         "R2/C1",
-        "Flow E2 must enumerate only direct folders/files in one request",
+        "Flow E2 must page the direct folder and file collections independently",
+    )
+    advance_folder = find_action(flows["E2"], "Mark_folder_visited")
+    advance_parameters = (
+        advance_folder.get("inputs", {}).get("parameters", {})
+    )
+    require(
+        "__next" in str(advance_parameters.get("item/NextPageUri", ""))
+        and "EnumerationPhase" in str(
+            advance_parameters.get("item/EnumerationPhase/Value", "")
+        )
+        and "Visited" in str(
+            advance_parameters.get("item/Status/Value", "")
+        ),
+        "R2/C1",
+        "a frontier row must persist continuation state and become Visited only after both collections drain",
     )
     frontier = find_action(flows["E2"], "Get_pending_frontier_chunk")
     require(
@@ -303,6 +379,12 @@ def validate_r2(flows):
         and "Seeding" in raw(flows["E1"]),
         "R2",
         "a walk must not become consumable until its root frontier is seeded",
+    )
+    require(
+        "item/EnumerationPhase/Value" in raw(flows["E1"])
+        and "item/NextPageUri" in raw(flows["E1"]),
+        "R2/C1",
+        "the root frontier row must initialize direct-child pagination state",
     )
     require(
         bool(find_action(flows["E2"], "Get_stale_index_chunk"))

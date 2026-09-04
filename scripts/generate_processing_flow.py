@@ -499,11 +499,96 @@ def expected_text():
             "authentication": "@parameters('$authentication')",
         },
     }
+    root["Get_newer_index_walk_for_approved_run"] = {
+        "runAfter": {"Get_rollback_lock": ["Succeeded"]},
+        "type": "OpenApiConnection",
+        "inputs": {
+            "host": {
+                "connectionName": "shared_sharepointonline",
+                "operationId": "GetItems",
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+            },
+            "parameters": {
+                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                "$filter": (
+                    "ID gt @{if(greater(length(body('Get_approved_run')?['value']), 0), "
+                    "int(coalesce(first(body('Get_approved_run')?['value'])?"
+                    "['IndexSnapshotItemId'], 0)), 2147483647)}"
+                ),
+                "$top": 1,
+            },
+            "authentication": "@parameters('$authentication')",
+        },
+        "description": (
+            "Revalidate the approved plan's index snapshot immediately before "
+            "execution. This closes the race between A3's approval check and "
+            "B's first metered call."
+        ),
+    }
+    root["Cancel_stale_approved_run"] = {
+        "runAfter": {"Get_newer_index_walk_for_approved_run": ["Succeeded"]},
+        "type": "If",
+        "expression": {
+            "and": [
+                {"equals": ["@length(body('Get_active_run')?['value'])", 0]},
+                {"greater": ["@length(body('Get_approved_run')?['value'])", 0]},
+                {
+                    "greater": [
+                        "@length(body('Get_newer_index_walk_for_approved_run')?['value'])",
+                        0,
+                    ]
+                },
+            ]
+        },
+        "actions": {
+            "Cancel_stale_approved_plan": {
+                "runAfter": {},
+                "type": "OpenApiConnection",
+                "inputs": {
+                    "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                    },
+                    "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                        "id": "@first(body('Get_approved_run')?['value'])?['ID']",
+                        "item/Status/Value": "Cancelled",
+                        "item/SummaryMessage": (
+                            "Execution cancelled because a newer index walk "
+                            "exists. Publish again after it completes."
+                        ),
+                    },
+                    "authentication": "@parameters('$authentication')",
+                },
+            }
+        },
+        "else": {"actions": {}},
+    }
     exit_action = root["Exit_if_no_active_run"]
-    exit_action["runAfter"] = {"Get_rollback_lock": ["Succeeded"]}
+    exit_action["runAfter"] = {"Cancel_stale_approved_run": ["Succeeded"]}
     exit_action["expression"] = {
         "or": [
             {"greater": ["@length(body('Get_rollback_lock')?['value'])", 0]},
+            {
+                "and": [
+                    {"equals": ["@length(body('Get_active_run')?['value'])", 0]},
+                    {
+                        "greater": [
+                            "@length(body('Get_approved_run')?['value'])",
+                            0,
+                        ]
+                    },
+                    {
+                        "greater": [
+                            "@length(body('Get_newer_index_walk_for_approved_run')?['value'])",
+                            0,
+                        ]
+                    },
+                ]
+            },
             {
                 "and": [
                     {"equals": ["@length(body('Get_active_run')?['value'])", 0]},
