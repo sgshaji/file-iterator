@@ -3,7 +3,7 @@
   <Entities></Entities>
   <Roles></Roles>
   <Workflows>
-    <Workflow WorkflowId="{a1000000-0000-4000-8000-000000000001}" Name="A - Plan Regeneration Run">
+    <Workflow WorkflowId="{a1000000-0000-4000-8000-000000000001}" Name="A1 - Start Regeneration Plan">
       <JsonFileName>/Workflows/A-PlanRegenerationRun.json</JsonFileName>
       <Type>1</Type>
       <Subprocess>0</Subprocess>
@@ -25,7 +25,57 @@
       <ModernFlowType>1</ModernFlowType>
       <PrimaryEntity>none</PrimaryEntity>
       <LocalizedNames>
-        <LocalizedName languagecode="1033" description="A - Plan Regeneration Run" />
+        <LocalizedName languagecode="1033" description="A1 - Start Regeneration Plan" />
+      </LocalizedNames>
+    </Workflow>
+    <Workflow WorkflowId="{a2000000-0000-4000-8000-000000000008}" Name="A2 - Continue Regeneration Plan">
+      <JsonFileName>/Workflows/A2-ContinueRegenerationPlan.json</JsonFileName>
+      <Type>1</Type>
+      <Subprocess>0</Subprocess>
+      <Category>5</Category>
+      <Mode>0</Mode>
+      <Scope>4</Scope>
+      <OnDemand>0</OnDemand>
+      <TriggerOnCreate>0</TriggerOnCreate>
+      <TriggerOnDelete>0</TriggerOnDelete>
+      <AsyncAutodelete>0</AsyncAutodelete>
+      <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+      <StateCode>0</StateCode>
+      <StatusCode>1</StatusCode>
+      <RunAs>1</RunAs>
+      <IsTransacted>1</IsTransacted>
+      <IntroducedVersion>1.0.0.0</IntroducedVersion>
+      <IsCustomizable>1</IsCustomizable>
+      <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+      <ModernFlowType>1</ModernFlowType>
+      <PrimaryEntity>none</PrimaryEntity>
+      <LocalizedNames>
+        <LocalizedName languagecode="1033" description="A2 - Continue Regeneration Plan" />
+      </LocalizedNames>
+    </Workflow>
+    <Workflow WorkflowId="{a3000000-0000-4000-8000-000000000009}" Name="A3 - Approve Regeneration Plan">
+      <JsonFileName>/Workflows/A3-ApproveRegenerationPlan.json</JsonFileName>
+      <Type>1</Type>
+      <Subprocess>0</Subprocess>
+      <Category>5</Category>
+      <Mode>0</Mode>
+      <Scope>4</Scope>
+      <OnDemand>0</OnDemand>
+      <TriggerOnCreate>0</TriggerOnCreate>
+      <TriggerOnDelete>0</TriggerOnDelete>
+      <AsyncAutodelete>0</AsyncAutodelete>
+      <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+      <StateCode>0</StateCode>
+      <StatusCode>1</StatusCode>
+      <RunAs>1</RunAs>
+      <IsTransacted>1</IsTransacted>
+      <IntroducedVersion>1.0.0.0</IntroducedVersion>
+      <IsCustomizable>1</IsCustomizable>
+      <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+      <ModernFlowType>1</ModernFlowType>
+      <PrimaryEntity>none</PrimaryEntity>
+      <LocalizedNames>
+        <LocalizedName languagecode="1033" description="A3 - Approve Regeneration Plan" />
       </LocalizedNames>
     </Workflow>
     <Workflow WorkflowId="{b2000000-0000-4000-8000-000000000002}" Name="B - Process Regeneration Batch">
@@ -78,7 +128,7 @@
         <LocalizedName languagecode="1033" description="C - Finalise Regeneration Run" />
       </LocalizedNames>
     </Workflow>
-    <Workflow WorkflowId="{d4000000-0000-4000-8000-000000000004}" Name="D - Rollback Regeneration Run">
+    <Workflow WorkflowId="{d4000000-0000-4000-8000-000000000004}" Name="D1 - Start Rollback">
       <JsonFileName>/Workflows/D-RollbackRegenerationRun.json</JsonFileName>
       <Type>1</Type>
       <Subprocess>0</Subprocess>
@@ -100,7 +150,32 @@
       <ModernFlowType>1</ModernFlowType>
       <PrimaryEntity>none</PrimaryEntity>
       <LocalizedNames>
-        <LocalizedName languagecode="1033" description="D - Rollback Regeneration Run" />
+        <LocalizedName languagecode="1033" description="D1 - Start Rollback" />
+      </LocalizedNames>
+    </Workflow>
+    <Workflow WorkflowId="{d4200000-0000-4000-8000-000000000011}" Name="D2 - Continue Rollback">
+      <JsonFileName>/Workflows/D2-ContinueRollback.json</JsonFileName>
+      <Type>1</Type>
+      <Subprocess>0</Subprocess>
+      <Category>5</Category>
+      <Mode>0</Mode>
+      <Scope>4</Scope>
+      <OnDemand>0</OnDemand>
+      <TriggerOnCreate>0</TriggerOnCreate>
+      <TriggerOnDelete>0</TriggerOnDelete>
+      <AsyncAutodelete>0</AsyncAutodelete>
+      <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+      <StateCode>0</StateCode>
+      <StatusCode>1</StatusCode>
+      <RunAs>1</RunAs>
+      <IsTransacted>1</IsTransacted>
+      <IntroducedVersion>1.0.0.0</IntroducedVersion>
+      <IsCustomizable>1</IsCustomizable>
+      <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+      <ModernFlowType>1</ModernFlowType>
+      <PrimaryEntity>none</PrimaryEntity>
+      <LocalizedNames>
+        <LocalizedName languagecode="1033" description="D2 - Continue Rollback" />
       </LocalizedNames>
     </Workflow>
     <Workflow WorkflowId="{e5100000-0000-4000-8000-000000000005}" Name="E1 - Start Index Backfill">
@@ -178,6 +253,56 @@
         <LocalizedName languagecode="1033" description="F - Index Delta" />
       </LocalizedNames>
     </Workflow>
+    <Workflow WorkflowId="{f6200000-0000-4000-8000-000000000010}" Name="F2 - Index Delete">
+      <JsonFileName>/Workflows/F2-IndexDelete.json</JsonFileName>
+      <Type>1</Type>
+      <Subprocess>0</Subprocess>
+      <Category>5</Category>
+      <Mode>0</Mode>
+      <Scope>4</Scope>
+      <OnDemand>0</OnDemand>
+      <TriggerOnCreate>0</TriggerOnCreate>
+      <TriggerOnDelete>0</TriggerOnDelete>
+      <AsyncAutodelete>0</AsyncAutodelete>
+      <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+      <StateCode>0</StateCode>
+      <StatusCode>1</StatusCode>
+      <RunAs>1</RunAs>
+      <IsTransacted>1</IsTransacted>
+      <IntroducedVersion>1.0.0.0</IntroducedVersion>
+      <IsCustomizable>1</IsCustomizable>
+      <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+      <ModernFlowType>1</ModernFlowType>
+      <PrimaryEntity>none</PrimaryEntity>
+      <LocalizedNames>
+        <LocalizedName languagecode="1033" description="F2 - Index Delete" />
+      </LocalizedNames>
+    </Workflow>
+    <Workflow WorkflowId="{f6300000-0000-4000-8000-000000000012}" Name="F3 - Index Folder Change">
+      <JsonFileName>/Workflows/F3-IndexFolderChange.json</JsonFileName>
+      <Type>1</Type>
+      <Subprocess>0</Subprocess>
+      <Category>5</Category>
+      <Mode>0</Mode>
+      <Scope>4</Scope>
+      <OnDemand>0</OnDemand>
+      <TriggerOnCreate>0</TriggerOnCreate>
+      <TriggerOnDelete>0</TriggerOnDelete>
+      <AsyncAutodelete>0</AsyncAutodelete>
+      <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+      <StateCode>0</StateCode>
+      <StatusCode>1</StatusCode>
+      <RunAs>1</RunAs>
+      <IsTransacted>1</IsTransacted>
+      <IntroducedVersion>1.0.0.0</IntroducedVersion>
+      <IsCustomizable>1</IsCustomizable>
+      <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+      <ModernFlowType>1</ModernFlowType>
+      <PrimaryEntity>none</PrimaryEntity>
+      <LocalizedNames>
+        <LocalizedName languagecode="1033" description="F3 - Index Folder Change" />
+      </LocalizedNames>
+    </Workflow>
   </Workflows>
   <FieldSecurityProfiles></FieldSecurityProfiles>
   <Templates />
@@ -191,22 +316,6 @@
     <connectionreference connectionreferencelogicalname="fi_sharedsharepointonline">
       <connectionreferencedisplayname>SharePoint (regeneration solution)</connectionreferencedisplayname>
       <connectorid>/providers/Microsoft.PowerApps/apis/shared_sharepointonline</connectorid>
-      <iscustomizable>1</iscustomizable>
-      <promptingbehavior>0</promptingbehavior>
-      <statecode>0</statecode>
-      <statuscode>1</statuscode>
-    </connectionreference>
-    <connectionreference connectionreferencelogicalname="fi_sharedapprovals">
-      <connectionreferencedisplayname>Approvals (regeneration solution)</connectionreferencedisplayname>
-      <connectorid>/providers/Microsoft.PowerApps/apis/shared_approvals</connectorid>
-      <iscustomizable>1</iscustomizable>
-      <promptingbehavior>0</promptingbehavior>
-      <statecode>0</statecode>
-      <statuscode>1</statuscode>
-    </connectionreference>
-    <connectionreference connectionreferencelogicalname="fi_sharedoffice365">
-      <connectionreferencedisplayname>Office 365 Outlook (regeneration solution)</connectionreferencedisplayname>
-      <connectorid>/providers/Microsoft.PowerApps/apis/shared_office365</connectorid>
       <iscustomizable>1</iscustomizable>
       <promptingbehavior>0</promptingbehavior>
       <statecode>0</statecode>
@@ -236,6 +345,13 @@
       <defaultvalue>Shared Documents</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
       <description>The library's URL name, which is frequently different from its display name (Documents vs Shared Documents). Use the value in the browser address bar.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="fi_WebServerRelativeUrl">
+      <displayname>Web Server-Relative URL</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Server-relative URL of the SharePoint web, with a leading slash and no trailing slash. Prefixes connector trigger tokens, which omit the /sites/&lt;web&gt; segment.</description>
     </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_RootFolderPath">
       <displayname>Root Folder Path</displayname>
@@ -291,13 +407,13 @@
       <introducedversion>1.0.0.0</introducedversion>
       <description>Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot.</description>
     </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_MaxAttempts">
-      <displayname>Max Attempts</displayname>
+    <environmentvariabledefinition schemaname="fi_PlanningPageSize">
+      <displayname>Planning Page Size</displayname>
       <type>100000001</type>
       <isrequired>1</isrequired>
-      <defaultvalue>3</defaultvalue>
+      <defaultvalue>200</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
-      <description>Retry ceiling per work item, after which it is parked as Failed for human review. Unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight.</description>
+      <description>DocumentIndex rows consumed per planner run. Keeps planning below the 16 MB per-action output cap while guaranteeing eventual coverage beyond 5,000 rows.</description>
     </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_MaxDocumentsPerRun">
       <displayname>Max Documents Per Run</displayname>
@@ -323,6 +439,14 @@
       <introducedversion>1.0.0.0</introducedversion>
       <description>Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size.</description>
     </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="fi_RollbackPageSize">
+      <displayname>Rollback Page Size</displayname>
+      <type>100000001</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>25</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Side-effect manifests restored per rollback worker run.</description>
+    </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_DryRun">
       <displayname>Dry Run</displayname>
       <type>100000002</type>
@@ -330,13 +454,6 @@
       <defaultvalue>1</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
       <description>When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan.</description>
-    </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_NotificationRecipient">
-      <displayname>Notification Recipient</displayname>
-      <type>100000000</type>
-      <isrequired>1</isrequired>
-      <introducedversion>1.0.0.0</introducedversion>
-      <description>Recipient for approval requests, run summaries and failure alerts.</description>
     </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_AgentId">
       <displayname>Agent Schema Name</displayname>
@@ -377,6 +494,14 @@
       <defaultvalue>WalkFrontier</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
       <description>Holds the folder walk frontier. Persisted rather than held in an array variable so the walk is resumable, observable, and immune to the 16 MB action output cap.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="fi_IndexWalkRunListName">
+      <displayname>Index Walk Run List Name</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>IndexWalkRun</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Tracks whether a full backfill and stale-row reconciliation completed successfully.</description>
     </environmentvariabledefinition>
   </environmentvariabledefinitions>
 </ImportExportXml>

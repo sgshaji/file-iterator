@@ -20,6 +20,7 @@
           "type": "OpenApiConnection",
           "recurrence": { "frequency": "Minute", "interval": 5 },
           "splitOn": "@triggerOutputs()?['body/value']",
+          "runtimeConfiguration": { "concurrency": { "runs": 1 } },
           "inputs": {
             "host": {
               "connectionName": "shared_sharepointonline",
@@ -67,14 +68,34 @@
           "type": "Compose",
           "inputs": {
             "FileName": "@triggerOutputs()?['body/{FilenameWithExtension}']",
-            "Path": "@triggerOutputs()?['body/{FullPath}']",
-            "ParentFolderUrl": "@triggerOutputs()?['body/{Path}']",
+            "Path": "@{concat(parameters('fi_WebServerRelativeUrl (fi_WebServerRelativeUrl)'), '/', triggerOutputs()?['body/{FullPath}'])}",
+            "ParentFolderUrl": "@{concat(parameters('fi_WebServerRelativeUrl (fi_WebServerRelativeUrl)'), '/', triggerOutputs()?['body/{Path}'])}",
             "Extension": "@toLower(concat('.', last(split(triggerOutputs()?['body/{FilenameWithExtension}'], '.'))))",
-            "IsFolder": "@triggerOutputs()?['body/{IsFolder}']"
+            "IsFolder": "@triggerOutputs()?['body/{IsFolder}']",
+            "ListItemId": "@triggerOutputs()?['body/ID']"
           }
         },
-        "Is_this_file_in_scope": {
+        "Find_existing_index_row": {
           "runAfter": { "Compose_file_facts": ["Succeeded"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+              "$filter": "ListItemId eq @{outputs('Compose_file_facts')?['ListItemId']}",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "Library item ID remains stable across rename and extension changes, so an out-of-scope rename can disable the old index row."
+        },
+        "Is_this_file_in_scope": {
+          "runAfter": { "Find_existing_index_row": ["Succeeded"] },
           "type": "If",
           "expression": {
             "and": [
@@ -96,33 +117,33 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "parameters/method": "GET",
-                  "parameters/uri": "_api/web/GetFileByServerRelativePath(decodedurl='@{replace(triggerOutputs()?['body/{FullPath}'],'''','''''')}')?$select=UniqueId,Name,ServerRelativeUrl,Length,TimeLastModified",
+                  "parameters/uri": "_api/web/GetFileByServerRelativePath(decodedurl='@{replace(outputs('Compose_file_facts')?['Path'],'''','''''')}')?$select=UniqueId,Name,ServerRelativeUrl,Length,TimeLastModified",
                   "parameters/headers": { "Accept": "application/json;odata=verbose" }
                 },
                 "authentication": "@parameters('$authentication')"
               },
               "description": "UniqueId is the index key and the trigger does not supply it directly."
             },
-            "Find_existing_index_row": {
+            "Get_parent_folder_identity": {
               "runAfter": { "Get_file_identity": ["Succeeded"] },
               "type": "OpenApiConnection",
               "inputs": {
                 "host": {
                   "connectionName": "shared_sharepointonline",
-                  "operationId": "GetItems",
+                  "operationId": "HttpRequest",
                   "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
                 },
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                  "$filter": "UniqueId eq '@{body('Get_file_identity')?['d']?['UniqueId']}'",
-                  "$top": 1
+                  "parameters/method": "GET",
+                  "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{replace(outputs('Compose_file_facts')?['ParentFolderUrl'],'''','''''')}')?$select=UniqueId",
+                  "parameters/headers": { "Accept": "application/json;odata=verbose" }
                 },
                 "authentication": "@parameters('$authentication')"
               }
             },
             "Compose_document_role": {
-              "runAfter": { "Find_existing_index_row": ["Succeeded"] },
+              "runAfter": { "Get_parent_folder_identity": ["Succeeded"] },
               "type": "Compose",
               "inputs": "@if(contains(toLower(concat('/', outputs('Compose_file_facts')?['ParentFolderUrl'], '/')), toLower(concat('/', parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)'), '/'))), 'Archived', if(contains(toLower(concat('/', outputs('Compose_file_facts')?['ParentFolderUrl'], '/')), toLower(concat('/', parameters('fi_OutputFolderName (fi_OutputFolderName)'), '/'))), 'Output', if(startsWith(toLower(outputs('Compose_file_facts')?['ParentFolderUrl']), toLower(parameters('fi_TemplateFolderPath (fi_TemplateFolderPath)'))), 'Template', 'Source')))"
             },
@@ -147,9 +168,13 @@
                       "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
                       "item/Title": "@body('Get_file_identity')?['d']?['Name']",
                       "item/UniqueId": "@body('Get_file_identity')?['d']?['UniqueId']",
+                      "item/ListItemId": "@outputs('Compose_file_facts')?['ListItemId']",
                       "item/FileName": "@body('Get_file_identity')?['d']?['Name']",
                       "item/ServerRelativeUrl": "@body('Get_file_identity')?['d']?['ServerRelativeUrl']",
                       "item/ParentFolderUrl": "@outputs('Compose_file_facts')?['ParentFolderUrl']",
+                      "item/ParentFolderUniqueId": "@body('Get_parent_folder_identity')?['d']?['UniqueId']",
+                      "item/DocumentStem": "@toLower(substring(body('Get_file_identity')?['d']?['Name'], 0, lastIndexOf(body('Get_file_identity')?['d']?['Name'], '.')))",
+                      "item/DocumentKey": "@{concat(body('Get_parent_folder_identity')?['d']?['UniqueId'], ':', toLower(substring(body('Get_file_identity')?['d']?['Name'], 0, lastIndexOf(body('Get_file_identity')?['d']?['Name'], '.'))))}",
                       "item/Extension": "@outputs('Compose_file_facts')?['Extension']",
                       "item/SizeBytes": "@int(coalesce(body('Get_file_identity')?['d']?['Length'], 0))",
                       "item/TimeLastModified": "@body('Get_file_identity')?['d']?['TimeLastModified']",
@@ -176,8 +201,14 @@
                         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                         "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
                         "id": "@first(body('Find_existing_index_row')?['value'])?['ID']",
+                        "item/ListItemId": "@outputs('Compose_file_facts')?['ListItemId']",
+                        "item/FileName": "@body('Get_file_identity')?['d']?['Name']",
                         "item/ServerRelativeUrl": "@body('Get_file_identity')?['d']?['ServerRelativeUrl']",
                         "item/ParentFolderUrl": "@outputs('Compose_file_facts')?['ParentFolderUrl']",
+                        "item/ParentFolderUniqueId": "@body('Get_parent_folder_identity')?['d']?['UniqueId']",
+                        "item/DocumentStem": "@toLower(substring(body('Get_file_identity')?['d']?['Name'], 0, lastIndexOf(body('Get_file_identity')?['d']?['Name'], '.')))",
+                        "item/DocumentKey": "@{concat(body('Get_parent_folder_identity')?['d']?['UniqueId'], ':', toLower(substring(body('Get_file_identity')?['d']?['Name'], 0, lastIndexOf(body('Get_file_identity')?['d']?['Name'], '.'))))}",
+                        "item/Extension": "@outputs('Compose_file_facts')?['Extension']",
                         "item/SizeBytes": "@int(coalesce(body('Get_file_identity')?['d']?['Length'], 0))",
                         "item/TimeLastModified": "@body('Get_file_identity')?['d']?['TimeLastModified']",
                         "item/DocumentRole/Value": "@outputs('Compose_document_role')",
@@ -186,13 +217,49 @@
                       },
                       "authentication": "@parameters('$authentication')"
                     },
-                    "description": "TemplateName and TemplateFingerprint are not touched. Only Flow B sets them, and cost filters F1/F3 depend on them."
+                    "description": "Generation history remains in work items; this row tracks only the current file identity and scope state."
                   }
                 }
               }
             }
           },
-          "else": { "actions": {} }
+          "else": {
+            "actions": {
+              "Disable_existing_out_of_scope_row": {
+                "runAfter": {},
+                "type": "If",
+                "expression": {
+                  "greater": [ "@length(body('Find_existing_index_row')?['value'])", 0 ]
+                },
+                "actions": {
+                  "Patch_out_of_scope_row": {
+                    "runAfter": {},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                        "id": "@first(body('Find_existing_index_row')?['value'])?['ID']",
+                        "item/FileName": "@outputs('Compose_file_facts')?['FileName']",
+                        "item/ServerRelativeUrl": "@outputs('Compose_file_facts')?['Path']",
+                        "item/ParentFolderUrl": "@outputs('Compose_file_facts')?['ParentFolderUrl']",
+                        "item/Extension": "@outputs('Compose_file_facts')?['Extension']",
+                        "item/IsExcluded": true,
+                        "item/IndexedAt": "@utcNow()"
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    }
+                  }
+                },
+                "else": { "actions": {} }
+              }
+            }
+          }
         }
       },
       "outputs": {}

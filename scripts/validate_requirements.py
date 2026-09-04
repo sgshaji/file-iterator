@@ -20,12 +20,17 @@ CUSTOMIZATIONS_XML = os.path.join(
 
 FLOW_FILES = {
     "A": "A-PlanRegenerationRun.json",
+    "A2": "A2-ContinueRegenerationPlan.json",
+    "A3": "A3-ApproveRegenerationPlan.json",
     "B": "B-ProcessRegenerationBatch.json",
     "C": "C-FinaliseRegenerationRun.json",
     "D": "D-RollbackRegenerationRun.json",
+    "D2": "D2-ContinueRollback.json",
     "E1": "E1-StartIndexBackfill.json",
     "E2": "E2-IndexBackfillWorker.json",
     "F": "F-IndexDelta.json",
+    "F2": "F2-IndexDelete.json",
+    "F3": "F3-IndexFolderChange.json",
 }
 
 AGENT_ID = "cree1_pdconversionassistant_08zNQw"
@@ -35,8 +40,6 @@ SUPPORTED_EXTENSIONS = [".pdf", ".docx"]
 EXCLUDED_FOLDERS = ["Archive", "AD Documents"]
 ALLOWED_CONNECTORS = {
     "shared_sharepointonline",
-    "shared_approvals",
-    "shared_office365",
     "shared_agentnode",
 }
 
@@ -117,31 +120,123 @@ def validate_r1(flows):
         "R1",
         "Flow A trigger must be scoped to the configured template folder",
     )
-    gate = find_action(plan, "GATE_1_Is_this_an_explicit_publish")
+    require(
+        trigger.get("runtimeConfiguration", {})
+        .get("concurrency", {})
+        .get("runs")
+        == 1,
+        "R1",
+        "Flow A trigger must serialize duplicate publish deliveries",
+    )
+    fingerprint = find_action(plan, "Compose_template_fingerprint")
+    require(
+        "VersionNumber" in str(fingerprint.get("inputs", ""))
+        and "Modified" not in str(fingerprint.get("inputs", "")),
+        "R1/C4",
+        "publication identity must be stable across metadata-only trigger deliveries",
+    )
+    gate = find_action(plan, "GATE_explicit_publish")
     require(
         "published" in json.dumps(gate).lower(),
         "R1",
         "Flow A must require the explicit Published signal",
     )
     require(
-        bool(find_action(plan, "Get_existing_run_for_this_template_fingerprint")),
+        bool(find_action(plan, "Get_active_duplicate")),
         "R1",
         "Flow A must suppress duplicate active runs for the same fingerprint",
     )
     require(
-        bool(find_action(plan, "Create_work_item")),
+        bool(find_action(plan, "GATE_latest_index_is_complete"))
+        and bool(find_action(flows["A2"], "Get_newer_index_walk"))
+        and bool(find_action(flows["A3"], "Get_newer_index_walk")),
+        "R1/R2",
+        "planning and approval must be invalidated by any newer index walk",
+    )
+    duplicate_filter = str(
+        find_action(plan, "Get_active_duplicate")
+        .get("inputs", {})
+        .get("parameters", {})
+        .get("$filter", "")
+    )
+    require(
+        "RunKey eq" in duplicate_filter
+        and "CompletedWithErrors" in duplicate_filter
+        and "Status ne" in duplicate_filter,
+        "R1",
+        "duplicate delivery suppression must preserve live-after-dry promotion and errored-run retry",
+    )
+    require(
+        bool(find_action(flows["A2"], "Create_work_item")),
         "R1",
         "Flow A must persist one work item per selected source",
     )
     require(
-        bool(find_action(plan, "GATE_5_Request_approval")),
+        bool(find_action(flows["A3"], "Patch_approval_outcome")),
         "R1",
-        "Flow A must obtain approval before execution",
+        "A3 must apply an audited SharePoint approval decision before execution",
     )
     require(
         list(triggers(flows["B"]).values())[0].get("type") == "Recurrence",
         "R1",
         "Flow B must drain approved work on a schedule",
+    )
+    require(
+        list(triggers(flows["B"]).values())[0]
+        .get("runtimeConfiguration", {})
+        .get("concurrency", {})
+        .get("runs")
+        == 1,
+        "R1/C4",
+        "Flow B trigger concurrency must be one to prevent duplicate claims",
+    )
+    planner_trigger = list(triggers(flows["A2"]).values())[0]
+    require(
+        planner_trigger.get("type") == "Recurrence"
+        and planner_trigger.get("runtimeConfiguration", {})
+        .get("concurrency", {})
+        .get("runs")
+        == 1,
+        "R1/C2",
+        "A2 must page the index through a single-concurrency recurrence",
+    )
+    page = find_action(flows["A2"], "Get_source_page")
+    require(
+        "PlanningPageSize"
+        in str(page.get("inputs", {}).get("parameters", {}).get("$top", ""))
+        and "PlanningCursorId"
+        in str(page.get("inputs", {}).get("parameters", {}).get("$filter", "")),
+        "R1/C2",
+        "A2 must read bounded pages after a persisted cursor",
+    )
+    require(
+        '"$top":5000' not in raw(flows["A2"]).replace(" ", ""),
+        "R1/C2",
+        "the planner must not aggregate a 5,000-row action output",
+    )
+    existing = find_action(flows["A2"], "Get_existing_current_work_item")
+    require(
+        "RunId eq" in str(existing.get("inputs", {}).get("parameters", {}).get("$filter", "")),
+        "R1",
+        "a resumed planning page must skip work items already written by the same run",
+    )
+    for action_name in ("Get_existing_current_work_item", "Get_prior_success"):
+        filter_text = str(
+            find_action(flows["A2"], action_name)
+            .get("inputs", {})
+            .get("parameters", {})
+            .get("$filter", "")
+        )
+        require(
+            "replace(items('For_each_candidate')?['DocumentKey']" in filter_text,
+            "R1",
+            "%s must escape apostrophes in DocumentKey" % action_name,
+        )
+    require(
+        int(config_map(load_json(CONFIG_PATH))["fi_PlanningPageSize"]["defaultValue"])
+        <= 1000,
+        "R1/C2",
+        "planning pages must remain small enough to avoid the 16 MB action cap",
     )
     require(
         list(triggers(flows["C"]).values())[0].get("type") == "Recurrence",
@@ -179,12 +274,64 @@ def validate_r2(flows):
         "R2/C2",
         "the folder frontier must be persisted in SharePoint",
     )
+    require(
+        bool(find_action(flows["E2"], "Record_enumeration_failure")),
+        "R2",
+        "direct enumeration failures must leave no frontier row stranded InProgress",
+    )
+    require(
+        bool(find_action(flows["E2"], "Get_unfinished_frontier_row")),
+        "R2",
+        "reconciliation must prove no fresh InProgress frontier row remains",
+    )
+    require(
+        bool(find_action(flows["E2"], "Get_stale_index_chunk"))
+        and bool(find_action(flows["E2"], "Advance_or_complete_reconciliation")),
+        "R2",
+        "a successful full walk must reconcile files that disappeared",
+    )
+    require(
+        "IndexWalkRunListName" in worker_raw
+        and "CompletedWithErrors" in worker_raw,
+        "R2",
+        "the backfill must expose an explicit completed or failed snapshot state",
+    )
     delta_trigger = list(triggers(flows["F"]).values())[0]
     require(
         delta_trigger.get("inputs", {}).get("host", {}).get("operationId")
         == "GetOnUpdatedFileItems",
         "R2",
         "Flow F must maintain the index with the proven file-change trigger",
+    )
+    delete_trigger = list(triggers(flows["F2"]).values())[0]
+    require(
+        delete_trigger.get("inputs", {}).get("host", {}).get("operationId")
+        == "GetOnDeletedFileItems",
+        "R2",
+        "file deletions must disable index rows without waiting for a backfill",
+    )
+    require(
+        bool(find_action(flows["F2"], "HANDLE_deleted_folder"))
+        and bool(find_action(flows["F3"], "HANDLE_updated_folder")),
+        "R2",
+        "folder delete, rename and move events must queue full reconciliation",
+    )
+    delta_raw = raw(flows["F"])
+    require(
+        all(
+            token in delta_raw
+            for token in (
+                "fi_WebServerRelativeUrl",
+                "item/FileName",
+                "item/Extension",
+                "Disable_existing_out_of_scope_row",
+                "ListItemId",
+                "ParentFolderUniqueId",
+                "DocumentStem",
+            )
+        ),
+        "R2",
+        "delta indexing must normalize trigger paths and refresh rename metadata",
     )
 
 
@@ -197,6 +344,16 @@ def validate_r3_r4(config, flows):
         "R3",
         "source extensions must exactly match the deployed agent contract: %s"
         % SUPPORTED_EXTENSIONS,
+    )
+    with open(
+        os.path.join(ROOT, "docs", "Template-Regeneration-Solution-Design.md"),
+        encoding="utf-8",
+    ) as handle:
+        design = handle.read()
+    require(
+        "Legacy `.doc` files must be migrated to `.docx` before indexing" in design,
+        "R3",
+        "the unsupported legacy .doc boundary must be explicit in the requirement",
     )
     require(
         exclusions == EXCLUDED_FOLDERS,
@@ -253,6 +410,14 @@ def validate_r5(config, flows):
             "R5",
             "InvokeAgent must use exactly body/agentId and body/prompt",
         )
+        require(
+            call.get("runtimeConfiguration", {})
+            .get("retryPolicy", {})
+            .get("type")
+            == "None",
+            "R5/R7",
+            "InvokeAgent connector retries must be explicitly disabled",
+        )
     prompt = find_action(flows["B"], "COMPOSE_agent_prompt")
     prompt_text = str(prompt.get("inputs", ""))
     require(
@@ -266,7 +431,7 @@ def validate_r5(config, flows):
         "agent prompt must not use a folder as sourcePath",
     )
     require(
-        bool(find_action(flows["A"], "Find_preferred_competitor")),
+        bool(find_action(flows["A2"], "GATE_preferred_source")),
         "R5/C4",
         "Flow A must suppress the non-preferred member of PDF/DOCX pairs",
     )
@@ -287,6 +452,28 @@ def validate_r5(config, flows):
         "R5",
         "Flow B must persist the complete parsed agent report",
     )
+    require(
+        "Persist_agent_call_count" in processing_raw,
+        "R5/C4",
+        "agent cost must be persisted immediately after each metered call",
+    )
+    require(
+        '"type":["integer","null"]' in processing_raw.replace(" ", ""),
+        "R5",
+        "contract-valid failed reports must allow missing byte counts",
+    )
+    require(
+        "result('PARSE_agent_report')" not in processing_raw
+        and bool(find_action(flows["B"], "TRY_parse_agent_report")),
+        "R5",
+        "ParseJson status must be routed through a scope, not result(ParseJson)",
+    )
+    require(
+        "fi_MaxAttempts" not in processing_raw
+        and "Mark_agent_failed_or_retry" not in processing_raw,
+        "R5/R7",
+        "side-effecting agent attempts must not be retried automatically",
+    )
 
 
 def validate_r6(config, flows):
@@ -299,6 +486,11 @@ def validate_r6(config, flows):
         "R6",
         "only approved Microsoft connectors may be configured; found %s"
         % sorted(configured - ALLOWED_CONNECTORS),
+    )
+    require(
+        configured == ALLOWED_CONNECTORS,
+        "R6",
+        "the solution must declare only SharePoint and the required agent connector",
     )
     used = set()
     for flow in flows.values():
@@ -321,25 +513,32 @@ def validate_r6(config, flows):
 
 def validate_r7(flows, lists):
     rollback = flows["D"]
+    worker = flows["D2"]
     require(
-        bool(find_action(rollback, "PARSE_agent_result")),
+        bool(find_action(worker, "PARSE_agent_result")),
         "R7",
         "rollback must parse the persisted agent result",
     )
     require(
-        bool(find_action(rollback, "DELETE_generated_output")),
+        bool(find_action(rollback, "Lock_run_for_rollback"))
+        and "RollbackInProgress" in raw(rollback),
+        "R7",
+        "rollback must lock a terminal run before restoring files",
+    )
+    require(
+        bool(find_action(worker, "DELETE_generated_output")),
         "R7",
         "rollback must remove generated outputs, including first-time outputs",
     )
     require(
-        bool(find_action(rollback, "For_each_archived_file"))
-        and bool(find_action(rollback, "RESTORE_archived_file")),
+        bool(find_action(worker, "For_each_archived_file"))
+        and bool(find_action(worker, "RESTORE_archived_file")),
         "R7",
         "rollback must restore every archived displaced file",
     )
     require(
-        bool(find_action(rollback, "Mark_item_rolled_back"))
-        and bool(find_action(rollback, "Mark_run_rolled_back")),
+        bool(find_action(worker, "Mark_item_rolled_back"))
+        and bool(find_action(worker, "Mark_run_rolled_back")),
         "R7",
         "rollback status must be derived from complete item restoration",
     )
@@ -358,6 +557,23 @@ def validate_r7(flows, lists):
         "RolledBack" in columns["Status"].get("choices", []),
         "R7",
         "work item status choices must include RolledBack",
+    )
+    require(
+        "Status eq 'Failed'" in raw(worker)
+        and "Get_unrecoverable_failed_items" in raw(worker),
+        "R7",
+        "rollback must include failed attempts with manifests and reject unknown side effects",
+    )
+    rollback_page = find_action(worker, "Get_rollback_page")
+    require(
+        "RollbackPageSize"
+        in str(
+            rollback_page.get("inputs", {})
+            .get("parameters", {})
+            .get("$top", "")
+        ),
+        "R7/C2",
+        "rollback must consume manifests through a bounded persisted cursor",
     )
 
 
@@ -398,8 +614,11 @@ def validate_delivery(config, flows):
         deploy_workflow = handle.read()
     for generator in (
         "generate_solution_shell.py --check",
+        "generate_planning_flows.py --check",
         "generate_processing_flow.py --check",
         "generate_rollback_flow.py --check",
+        "generate_finalization_flow.py --check",
+        "generate_folder_update_flow.py --check",
         "validate_requirements.py",
     ):
         require(
@@ -417,6 +636,26 @@ def validate_delivery(config, flows):
         "DELIVERY",
         "deployment must not deploy the diagnostic harness",
     )
+    require(
+        "materialize_deployment_settings.py" in deploy_workflow
+        and "deployment-settings.resolved.json" in deploy_workflow,
+        "DELIVERY",
+        "deployment must resolve protected environment bindings and import only the resolved settings",
+    )
+    for binding in (
+        "FI_SITE_ADDRESS",
+        "FI_WEB_SERVER_RELATIVE_URL",
+        "FI_LIBRARY_URL_NAME",
+        "FI_ROOT_FOLDER_PATH",
+        "FI_TEMPLATE_FOLDER_PATH",
+        "FI_SHAREPOINT_CONNECTION_ID",
+        "FI_AGENT_CONNECTION_ID",
+    ):
+        require(
+            binding in deploy_workflow,
+            "DELIVERY",
+            "deployment workflow is missing protected binding %s" % binding,
+        )
 
 
 def main():

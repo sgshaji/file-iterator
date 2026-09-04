@@ -22,6 +22,16 @@
       "description": "The library's URL name, which is frequently different from its display name (Documents vs Shared Documents). Use the value in the browser address bar."
     },
     {
+      "schemaName": "fi_WebServerRelativeUrl",
+      "displayName": "Web Server-Relative URL",
+      "type": "String",
+      "required": true,
+      "defaultValue": "",
+      "example": "/sites/DemoFiles",
+      "usedBy": ["A", "F"],
+      "description": "Server-relative URL of the SharePoint web, with a leading slash and no trailing slash. Prefixes connector trigger tokens, which omit the /sites/<web> segment."
+    },
+    {
       "schemaName": "fi_RootFolderPath",
       "displayName": "Root Folder Path",
       "type": "String",
@@ -87,13 +97,13 @@
       "description": "Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot."
     },
     {
-      "schemaName": "fi_MaxAttempts",
-      "displayName": "Max Attempts",
+      "schemaName": "fi_PlanningPageSize",
+      "displayName": "Planning Page Size",
       "type": "Number",
       "required": true,
-      "defaultValue": 3,
-      "usedBy": ["B"],
-      "description": "Retry ceiling per work item, after which it is parked as Failed for human review. Unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight."
+      "defaultValue": 200,
+      "usedBy": ["A2"],
+      "description": "DocumentIndex rows consumed per planner run. Keeps planning below the 16 MB per-action output cap while guaranteeing eventual coverage beyond 5,000 rows."
     },
     {
       "schemaName": "fi_MaxDocumentsPerRun",
@@ -123,6 +133,15 @@
       "description": "Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size."
     },
     {
+      "schemaName": "fi_RollbackPageSize",
+      "displayName": "Rollback Page Size",
+      "type": "Number",
+      "required": true,
+      "defaultValue": 25,
+      "usedBy": ["D2"],
+      "description": "Side-effect manifests restored per rollback worker run."
+    },
+    {
       "schemaName": "fi_DryRun",
       "displayName": "Dry Run",
       "type": "Boolean",
@@ -130,15 +149,6 @@
       "defaultValue": true,
       "usedBy": ["A"],
       "description": "When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan."
-    },
-    {
-      "schemaName": "fi_NotificationRecipient",
-      "displayName": "Notification Recipient",
-      "type": "String",
-      "required": true,
-      "defaultValue": "",
-      "usedBy": ["A", "C"],
-      "description": "Recipient for approval requests, run summaries and failure alerts."
     },
     {
       "schemaName": "fi_AgentId",
@@ -184,6 +194,15 @@
       "defaultValue": "WalkFrontier",
       "usedBy": ["E"],
       "description": "Holds the folder walk frontier. Persisted rather than held in an array variable so the walk is resumable, observable, and immune to the 16 MB action output cap."
+    },
+    {
+      "schemaName": "fi_IndexWalkRunListName",
+      "displayName": "Index Walk Run List Name",
+      "type": "String",
+      "required": true,
+      "defaultValue": "IndexWalkRun",
+      "usedBy": ["A", "E"],
+      "description": "Tracks whether a full backfill and stale-row reconciliation completed successfully."
     }
   ],
   "connectionReferences": [
@@ -192,18 +211,6 @@
       "displayName": "SharePoint (regeneration solution)",
       "connectorId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
       "description": "Standard SharePoint connector. Used by every flow for reads, writes and the folder walk. No premium connector is used anywhere in this solution."
-    },
-    {
-      "schemaName": "fi_sharedapprovals",
-      "displayName": "Approvals (regeneration solution)",
-      "connectorId": "/providers/Microsoft.PowerApps/apis/shared_approvals",
-      "description": "Used by Flow A for the approval gate and the second confirmation above MaxDocumentsPerRun."
-    },
-    {
-      "schemaName": "fi_sharedoffice365",
-      "displayName": "Office 365 Outlook (regeneration solution)",
-      "connectorId": "/providers/Microsoft.PowerApps/apis/shared_office365",
-      "description": "Used by Flow C for run summaries and failure alerts."
     },
     {
       "schemaName": "fi_sharedagentnode",

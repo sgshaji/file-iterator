@@ -12,6 +12,11 @@
       "//": "The library's URL name, which is frequently different from its display name (Documents vs Shared Documents). Use the value in the browser address bar."
     },
     {
+      "SchemaName": "fi_WebServerRelativeUrl",
+      "Value": "",
+      "//": "Server-relative URL of the SharePoint web, with a leading slash and no trailing slash. Prefixes connector trigger tokens, which omit the /sites/<web> segment."
+    },
+    {
       "SchemaName": "fi_RootFolderPath",
       "Value": "",
       "//": "Server-relative path of the source root. The walk starts here."
@@ -47,9 +52,9 @@
       "//": "Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot."
     },
     {
-      "SchemaName": "fi_MaxAttempts",
-      "Value": "3",
-      "//": "Retry ceiling per work item, after which it is parked as Failed for human review. Unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight."
+      "SchemaName": "fi_PlanningPageSize",
+      "Value": "200",
+      "//": "DocumentIndex rows consumed per planner run. Keeps planning below the 16 MB per-action output cap while guaranteeing eventual coverage beyond 5,000 rows."
     },
     {
       "SchemaName": "fi_MaxDocumentsPerRun",
@@ -67,14 +72,14 @@
       "//": "Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size."
     },
     {
+      "SchemaName": "fi_RollbackPageSize",
+      "Value": "25",
+      "//": "Side-effect manifests restored per rollback worker run."
+    },
+    {
       "SchemaName": "fi_DryRun",
       "Value": "true",
       "//": "When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan."
-    },
-    {
-      "SchemaName": "fi_NotificationRecipient",
-      "Value": "",
-      "//": "Recipient for approval requests, run summaries and failure alerts."
     },
     {
       "SchemaName": "fi_AgentId",
@@ -100,6 +105,11 @@
       "SchemaName": "fi_WalkFrontierListName",
       "Value": "WalkFrontier",
       "//": "Holds the folder walk frontier. Persisted rather than held in an array variable so the walk is resumable, observable, and immune to the 16 MB action output cap."
+    },
+    {
+      "SchemaName": "fi_IndexWalkRunListName",
+      "Value": "IndexWalkRun",
+      "//": "Tracks whether a full backfill and stale-row reconciliation completed successfully."
     }
   ],
   "ConnectionReferences": [
@@ -108,18 +118,6 @@
       "ConnectionId": "",
       "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
       "//": "Fill in the SharePoint (regeneration solution) connection id from the test environment."
-    },
-    {
-      "LogicalName": "fi_sharedapprovals",
-      "ConnectionId": "",
-      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_approvals",
-      "//": "Fill in the Approvals (regeneration solution) connection id from the test environment."
-    },
-    {
-      "LogicalName": "fi_sharedoffice365",
-      "ConnectionId": "",
-      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_office365",
-      "//": "Fill in the Office 365 Outlook (regeneration solution) connection id from the test environment."
     },
     {
       "LogicalName": "fi_sharedagentnode",

@@ -401,6 +401,21 @@ def check_flow(path):
         fail("STRUCTURE", "%s: no actions." % flow_name)
         return
 
+    if "filter(" in raw:
+        fail(
+            "STRUCTURE",
+            "%s: uses unsupported expression function filter(); use a "
+            "Query/Filter array action." % flow_name,
+        )
+    action_types = {name: action.get("type") for name, action, _ in walk_actions(actions)}
+    for reference in re.findall(r"result\('([^']+)'\)", raw):
+        if action_types.get(reference) not in ("Scope", "Foreach", "Until"):
+            fail(
+                "STRUCTURE",
+                "%s: result('%s') targets %s; result() only accepts scoped actions."
+                % (flow_name, reference, action_types.get(reference)),
+            )
+
     check_no_empty_branches(flow_name, actions)
     check_no_recursive_enumeration(flow_name, raw)
     check_agent_invocation(flow_name, flow, actions)

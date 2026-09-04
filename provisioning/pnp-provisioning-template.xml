@@ -21,14 +21,18 @@
         <pnp:ListInstance Title="DocumentIndex" Description="One row per file in scope. Maintained by Flow E (backfill) and Flow F (delta). Read by Flow A to resolve affected documents without walking the tree." TemplateType="100" Url="Lists/DocumentIndex" EnableVersioning="true" EnableAttachments="false" ContentTypesEnabled="false">
           <pnp:Fields>
             <Field ID="{47ef8735-65b9-446b-b2f7-4aaa1e82cdd1}" Name="UniqueId" StaticName="UniqueId" DisplayName="UniqueId" Type="Text" Required="TRUE" Indexed="TRUE" EnforceUniqueValues="TRUE" Description="SharePoint file GUID. Primary key." />
-            <Field ID="{d9bfb6a3-3f86-4369-80c6-bb0fdd4855a4}" Name="FileName" StaticName="FileName" DisplayName="FileName" Type="Text" Required="TRUE" Description="Leaf file name including extension." />
-            <Field ID="{21cdfa7c-7d12-45f8-87ec-03013f0c6ab2}" Name="ServerRelativeUrl" StaticName="ServerRelativeUrl" DisplayName="ServerRelativeUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Full server-relative path of the file." />
-            <Field ID="{4548fea3-ce03-4d8f-8570-82590219db86}" Name="ParentFolderUrl" StaticName="ParentFolderUrl" DisplayName="ParentFolderUrl" Type="Note" Required="TRUE" Indexed="TRUE" NumLines="4" RichText="FALSE" Description="Server-relative path of the containing folder. Queried by Flow A." />
-            <Field ID="{79c36e14-be40-497e-9d78-edecacb4d6d6}" Name="Extension" StaticName="Extension" DisplayName="Extension" Type="Text" Required="TRUE" Indexed="TRUE" Description="Lower-case extension including the dot, e.g. .docx" />
-            <Field ID="{880cd839-3957-4867-8409-0407846ef684}" Name="SizeBytes" StaticName="SizeBytes" DisplayName="SizeBytes" Type="Number" Required="FALSE" Description="File size. Used by output validation size bounds." />
-            <Field ID="{f416f895-0ebe-4599-a899-3e1a466a29db}" Name="TimeLastModified" StaticName="TimeLastModified" DisplayName="TimeLastModified" Type="DateTime" Required="FALSE" Description="SharePoint last modified timestamp." />
-            <Field ID="{5c11328c-16ab-4650-a205-999bae064c3c}" Name="Depth" StaticName="Depth" DisplayName="Depth" Type="Number" Required="FALSE" Description="Folder depth below the root folder. Diagnostics and walk sizing." />
-            <Field ID="{7d98e7ac-4e96-42fb-bf2c-bdccf29bf275}" Name="DocumentRole" StaticName="DocumentRole" DisplayName="DocumentRole" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Source documents are regenerated. Outputs are written to. Templates trigger runs. Archived rows are previous output versions.">
+            <Field ID="{d9bfb6a3-3f86-4369-80c6-bb0fdd4855a4}" Name="ListItemId" StaticName="ListItemId" DisplayName="ListItemId" Type="Number" Required="TRUE" Indexed="TRUE" Description="Stable library item ID used by the created/modified trigger, including rename events." />
+            <Field ID="{21cdfa7c-7d12-45f8-87ec-03013f0c6ab2}" Name="FileName" StaticName="FileName" DisplayName="FileName" Type="Text" Required="TRUE" Description="Leaf file name including extension." />
+            <Field ID="{4548fea3-ce03-4d8f-8570-82590219db86}" Name="ServerRelativeUrl" StaticName="ServerRelativeUrl" DisplayName="ServerRelativeUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Full server-relative path of the file." />
+            <Field ID="{79c36e14-be40-497e-9d78-edecacb4d6d6}" Name="ParentFolderUrl" StaticName="ParentFolderUrl" DisplayName="ParentFolderUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Server-relative path of the containing folder. The index itself is scoped to the configured root, so planning does not filter on this non-indexable long path." />
+            <Field ID="{880cd839-3957-4867-8409-0407846ef684}" Name="ParentFolderUniqueId" StaticName="ParentFolderUniqueId" DisplayName="ParentFolderUniqueId" Type="Text" Required="TRUE" Indexed="TRUE" Description="SharePoint folder GUID. Used with DocumentStem to find PDF/DOCX members of one document group without filtering on long paths." />
+            <Field ID="{f416f895-0ebe-4599-a899-3e1a466a29db}" Name="DocumentStem" StaticName="DocumentStem" DisplayName="DocumentStem" Type="Text" Required="TRUE" Indexed="TRUE" Description="Lower-case file name without extension. Paired with ParentFolderUniqueId for source preference." />
+            <Field ID="{5c11328c-16ab-4650-a205-999bae064c3c}" Name="DocumentKey" StaticName="DocumentKey" DisplayName="DocumentKey" Type="Text" Required="TRUE" Indexed="TRUE" Description="Stable logical document key: parent folder GUID plus lower-case stem. Survives PDF/DOCX replacement and drives idempotency." />
+            <Field ID="{7d98e7ac-4e96-42fb-bf2c-bdccf29bf275}" Name="Extension" StaticName="Extension" DisplayName="Extension" Type="Text" Required="TRUE" Indexed="TRUE" Description="Lower-case extension including the dot, e.g. .docx" />
+            <Field ID="{3210d4f9-0db0-4237-af43-7792dff35093}" Name="SizeBytes" StaticName="SizeBytes" DisplayName="SizeBytes" Type="Number" Required="FALSE" Description="File size. Used by output validation size bounds." />
+            <Field ID="{d1e3fc4a-68fe-48a5-ac34-2713b1196944}" Name="TimeLastModified" StaticName="TimeLastModified" DisplayName="TimeLastModified" Type="DateTime" Required="FALSE" Description="SharePoint last modified timestamp." />
+            <Field ID="{9252b8d0-2db4-4f56-8702-ba45442b5294}" Name="Depth" StaticName="Depth" DisplayName="Depth" Type="Number" Required="FALSE" Description="Folder depth below the root folder. Diagnostics and walk sizing." />
+            <Field ID="{415713ff-dfcc-42aa-b33e-0155a52e0bac}" Name="DocumentRole" StaticName="DocumentRole" DisplayName="DocumentRole" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Source documents are regenerated. Outputs are written to. Templates trigger runs. Archived rows are previous output versions.">
               <CHOICES>
                 <CHOICE>Source</CHOICE>
                 <CHOICE>Output</CHOICE>
@@ -37,77 +41,98 @@
               </CHOICES>
               <Default>Source</Default>
             </Field>
-            <Field ID="{3210d4f9-0db0-4237-af43-7792dff35093}" Name="TemplateName" StaticName="TemplateName" DisplayName="TemplateName" Type="Text" Required="FALSE" Indexed="TRUE" Description="For outputs: which template produced this document. Drives cost filter F1." />
-            <Field ID="{d1e3fc4a-68fe-48a5-ac34-2713b1196944}" Name="TemplateFingerprint" StaticName="TemplateFingerprint" DisplayName="TemplateFingerprint" Type="Text" Required="FALSE" Description="For outputs: fingerprint of the template version that produced this document. Drives cost filter F3 (skip already-current)." />
-            <Field ID="{9252b8d0-2db4-4f56-8702-ba45442b5294}" Name="LastSeenRunId" StaticName="LastSeenRunId" DisplayName="LastSeenRunId" Type="Text" Required="FALSE" Description="Stamped by every backfill. Rows not seen by a completed backfill are stale, i.e. the file was probably deleted." />
-            <Field ID="{415713ff-dfcc-42aa-b33e-0155a52e0bac}" Name="IsExcluded" StaticName="IsExcluded" DisplayName="IsExcluded" Type="Boolean" Required="FALSE" Description="Row retained for audit but never selected as a regeneration source.">
+            <Field ID="{44435be5-ffd4-4956-b98f-27a59461d4c9}" Name="LastSeenRunId" StaticName="LastSeenRunId" DisplayName="LastSeenRunId" Type="Text" Required="FALSE" Description="Stamped by every backfill. Rows not seen by a completed backfill are stale, i.e. the file was probably deleted." />
+            <Field ID="{ed69e0b2-c064-41c4-9f40-0af016f22f57}" Name="IsExcluded" StaticName="IsExcluded" DisplayName="IsExcluded" Type="Boolean" Required="FALSE" Indexed="TRUE" Description="Row retained for audit but never selected as a regeneration source.">
               <Default>0</Default>
             </Field>
-            <Field ID="{44435be5-ffd4-4956-b98f-27a59461d4c9}" Name="IndexedAt" StaticName="IndexedAt" DisplayName="IndexedAt" Type="DateTime" Required="FALSE" Description="When this row was last written by Flow E or F." />
+            <Field ID="{7099a786-cd9f-4cda-8ff9-8bbf62923641}" Name="IndexedAt" StaticName="IndexedAt" DisplayName="IndexedAt" Type="DateTime" Required="FALSE" Description="When this row was last written by Flow E or F." />
           </pnp:Fields>
         </pnp:ListInstance>
         <!-- RegenerationRun: One row per regeneration job. Created by Flow A, advanced by Flow B, closed by Flow C. -->
         <pnp:ListInstance Title="RegenerationRun" Description="One row per regeneration job. Created by Flow A, advanced by Flow B, closed by Flow C." TemplateType="100" Url="Lists/RegenerationRun" EnableVersioning="true" EnableAttachments="false" ContentTypesEnabled="false">
           <pnp:Fields>
-            <Field ID="{ed69e0b2-c064-41c4-9f40-0af016f22f57}" Name="RunId" StaticName="RunId" DisplayName="RunId" Type="Text" Required="TRUE" Indexed="TRUE" EnforceUniqueValues="TRUE" Description="GUID generated by Flow A." />
-            <Field ID="{7099a786-cd9f-4cda-8ff9-8bbf62923641}" Name="TemplateName" StaticName="TemplateName" DisplayName="TemplateName" Type="Text" Required="TRUE" Indexed="TRUE" Description="Template whose publication triggered this run." />
-            <Field ID="{5f579c41-cdf1-4571-a0d8-23a4032f9cf1}" Name="TemplateFingerprint" StaticName="TemplateFingerprint" DisplayName="TemplateFingerprint" Type="Text" Required="TRUE" Description="Fingerprint of the template content at trigger time. Compared against the previous completed run to suppress no-op runs (cost filter F2)." />
-            <Field ID="{89145d95-d8b1-4b81-ae99-fd580c8e7f3a}" Name="TemplateUrl" StaticName="TemplateUrl" DisplayName="TemplateUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Exact server-relative path of the published template passed to every work item." />
-            <Field ID="{2dfe1965-84ea-4b79-81ff-95c6e0ea8e47}" Name="TemplateVersion" StaticName="TemplateVersion" DisplayName="TemplateVersion" Type="Text" Required="FALSE" Description="SharePoint version label of the template file." />
-            <Field ID="{21fd9e52-ccad-4cd2-a0d4-3565cd2f004e}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Run lifecycle. Flow B only claims items belonging to an Approved or Running run.">
+            <Field ID="{5f579c41-cdf1-4571-a0d8-23a4032f9cf1}" Name="RunId" StaticName="RunId" DisplayName="RunId" Type="Text" Required="TRUE" Indexed="TRUE" EnforceUniqueValues="TRUE" Description="GUID generated by Flow A." />
+            <Field ID="{89145d95-d8b1-4b81-ae99-fd580c8e7f3a}" Name="RunKey" StaticName="RunKey" DisplayName="RunKey" Type="Text" Required="TRUE" Indexed="TRUE" Description="Template publication identity plus dry/live mode. Used to suppress duplicate active runs; completed error runs may be retried." />
+            <Field ID="{2dfe1965-84ea-4b79-81ff-95c6e0ea8e47}" Name="TemplateName" StaticName="TemplateName" DisplayName="TemplateName" Type="Text" Required="TRUE" Indexed="TRUE" Description="Template whose publication triggered this run." />
+            <Field ID="{21fd9e52-ccad-4cd2-a0d4-3565cd2f004e}" Name="TemplateFingerprint" StaticName="TemplateFingerprint" DisplayName="TemplateFingerprint" Type="Text" Required="TRUE" Description="Stable identity of the explicitly published template version. Used for trigger idempotency and prior-success filtering." />
+            <Field ID="{0771cb4a-4043-4f10-a7f8-4e046f78ee4c}" Name="TemplateUrl" StaticName="TemplateUrl" DisplayName="TemplateUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Exact server-relative path of the published template passed to every work item." />
+            <Field ID="{2103ee3f-f398-4419-9afd-0d0146b10179}" Name="TemplateVersion" StaticName="TemplateVersion" DisplayName="TemplateVersion" Type="Text" Required="FALSE" Description="SharePoint version label of the template file." />
+            <Field ID="{8aad5daf-46a9-4281-b517-e19c18d42d01}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Run lifecycle. Flow B only claims items belonging to an Approved or Running run; C aggregates counts in Finalizing; rollback first locks a terminal run as RollbackInProgress.">
               <CHOICES>
-                <CHOICE>Planned</CHOICE>
+                <CHOICE>Planning</CHOICE>
                 <CHOICE>AwaitingApproval</CHOICE>
                 <CHOICE>Approved</CHOICE>
                 <CHOICE>Running</CHOICE>
+                <CHOICE>Finalizing</CHOICE>
                 <CHOICE>Completed</CHOICE>
                 <CHOICE>CompletedWithErrors</CHOICE>
                 <CHOICE>Cancelled</CHOICE>
+                <CHOICE>RollbackInProgress</CHOICE>
                 <CHOICE>RolledBack</CHOICE>
               </CHOICES>
-              <Default>Planned</Default>
+              <Default>Planning</Default>
             </Field>
-            <Field ID="{0771cb4a-4043-4f10-a7f8-4e046f78ee4c}" Name="PlannedCount" StaticName="PlannedCount" DisplayName="PlannedCount" Type="Number" Required="FALSE" Description="Work items created by Flow A after cost filters.">
+            <Field ID="{89d78baa-76bd-4ad5-925d-f0c656b9f9bc}" Name="ApprovalDecision" StaticName="ApprovalDecision" DisplayName="ApprovalDecision" Type="Choice" Required="FALSE" Description="Human decision entered on the SharePoint run item and applied by A3.">
+              <CHOICES>
+                <CHOICE>Pending</CHOICE>
+                <CHOICE>Approved</CHOICE>
+                <CHOICE>Rejected</CHOICE>
+              </CHOICES>
+              <Default>Pending</Default>
+            </Field>
+            <Field ID="{2da536ad-5705-4310-8feb-ee8080063568}" Name="PlannedCount" StaticName="PlannedCount" DisplayName="PlannedCount" Type="Number" Required="FALSE" Description="Work items created by Flow A after cost filters.">
               <Default>0</Default>
             </Field>
-            <Field ID="{2103ee3f-f398-4419-9afd-0d0146b10179}" Name="SucceededCount" StaticName="SucceededCount" DisplayName="SucceededCount" Type="Number" Required="FALSE">
+            <Field ID="{b9e4ecf7-6eca-4a3c-b76c-6e64f026c0ea}" Name="SucceededCount" StaticName="SucceededCount" DisplayName="SucceededCount" Type="Number" Required="FALSE">
               <Default>0</Default>
             </Field>
-            <Field ID="{8aad5daf-46a9-4281-b517-e19c18d42d01}" Name="FailedCount" StaticName="FailedCount" DisplayName="FailedCount" Type="Number" Required="FALSE">
+            <Field ID="{9a95032b-5b68-403c-b00b-fa84b11938c6}" Name="FailedCount" StaticName="FailedCount" DisplayName="FailedCount" Type="Number" Required="FALSE">
               <Default>0</Default>
             </Field>
-            <Field ID="{89d78baa-76bd-4ad5-925d-f0c656b9f9bc}" Name="SkippedCount" StaticName="SkippedCount" DisplayName="SkippedCount" Type="Number" Required="FALSE">
+            <Field ID="{bf16c839-8e32-4830-89a9-f2a332d82823}" Name="SkippedCount" StaticName="SkippedCount" DisplayName="SkippedCount" Type="Number" Required="FALSE">
               <Default>0</Default>
             </Field>
-            <Field ID="{2da536ad-5705-4310-8feb-ee8080063568}" Name="AgentCallCount" StaticName="AgentCallCount" DisplayName="AgentCallCount" Type="Number" Required="FALSE" Description="HEADLINE COST METRIC. Reported by Flow C. If this approaches PlannedCount on every run, the cost filters are not working.">
+            <Field ID="{95e67e07-1f58-4660-a7f8-27fc3e393d05}" Name="AgentCallCount" StaticName="AgentCallCount" DisplayName="AgentCallCount" Type="Number" Required="FALSE" Description="HEADLINE COST METRIC. Reported by Flow C. If this approaches PlannedCount on every run, the cost filters are not working.">
               <Default>0</Default>
             </Field>
-            <Field ID="{b9e4ecf7-6eca-4a3c-b76c-6e64f026c0ea}" Name="IsDryRun" StaticName="IsDryRun" DisplayName="IsDryRun" Type="Boolean" Required="FALSE" Description="Plan-only run. Work items are created for inspection and never executed.">
+            <Field ID="{e5674e00-4a6f-4b7d-a1df-355f12aa0e14}" Name="IsDryRun" StaticName="IsDryRun" DisplayName="IsDryRun" Type="Boolean" Required="FALSE" Description="Plan-only run. Work items are created for inspection and never executed.">
               <Default>0</Default>
             </Field>
-            <Field ID="{9a95032b-5b68-403c-b00b-fa84b11938c6}" Name="RequiresSecondConfirmation" StaticName="RequiresSecondConfirmation" DisplayName="RequiresSecondConfirmation" Type="Boolean" Required="FALSE" Description="Set when PlannedCount exceeds MaxDocumentsPerRun. Circuit breaker.">
+            <Field ID="{36068dda-0750-4cf4-b44f-e4dd637781e4}" Name="RequiresSecondConfirmation" StaticName="RequiresSecondConfirmation" DisplayName="RequiresSecondConfirmation" Type="Boolean" Required="FALSE" Description="Set when PlannedCount exceeds MaxDocumentsPerRun. Circuit breaker.">
               <Default>0</Default>
             </Field>
-            <Field ID="{bf16c839-8e32-4830-89a9-f2a332d82823}" Name="RequestedBy" StaticName="RequestedBy" DisplayName="RequestedBy" Type="Text" Required="FALSE" />
-            <Field ID="{95e67e07-1f58-4660-a7f8-27fc3e393d05}" Name="ApprovedBy" StaticName="ApprovedBy" DisplayName="ApprovedBy" Type="Text" Required="FALSE" />
-            <Field ID="{e5674e00-4a6f-4b7d-a1df-355f12aa0e14}" Name="StartedAt" StaticName="StartedAt" DisplayName="StartedAt" Type="DateTime" Required="FALSE" />
-            <Field ID="{36068dda-0750-4cf4-b44f-e4dd637781e4}" Name="CompletedAt" StaticName="CompletedAt" DisplayName="CompletedAt" Type="DateTime" Required="FALSE" />
-            <Field ID="{821f500b-ac51-49c5-a6af-3331ef8742be}" Name="SummaryMessage" StaticName="SummaryMessage" DisplayName="SummaryMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Written by Flow C." />
+            <Field ID="{821f500b-ac51-49c5-a6af-3331ef8742be}" Name="PlanningCursorId" StaticName="PlanningCursorId" DisplayName="PlanningCursorId" Type="Number" Required="FALSE" Description="Highest DocumentIndex item ID consumed by the paged planner.">
+              <Default>0</Default>
+            </Field>
+            <Field ID="{9aa29dea-8fef-4725-a26e-b07ee22860c3}" Name="IndexSnapshotRunId" StaticName="IndexSnapshotRunId" DisplayName="IndexSnapshotRunId" Type="Text" Required="TRUE" Description="WalkRunId of the completed snapshot that authorized planning." />
+            <Field ID="{2345399f-c459-4390-9eca-c38f8118041e}" Name="IndexSnapshotItemId" StaticName="IndexSnapshotItemId" DisplayName="IndexSnapshotItemId" Type="Number" Required="TRUE" Description="IndexWalkRun list item ID. Any newer walk invalidates this plan before approval." />
+            <Field ID="{2c2c1e8f-d9b4-4fc4-a3ce-c3c3c0e27be9}" Name="FinalizationCursorId" StaticName="FinalizationCursorId" DisplayName="FinalizationCursorId" Type="Number" Required="FALSE" Description="Highest work-item ID counted by paged finalization.">
+              <Default>0</Default>
+            </Field>
+            <Field ID="{7916a0ab-d1fc-47d0-bb76-f443224eb40f}" Name="RollbackCursorId" StaticName="RollbackCursorId" DisplayName="RollbackCursorId" Type="Number" Required="FALSE" Description="Highest side-effect manifest processed by paged rollback.">
+              <Default>0</Default>
+            </Field>
+            <Field ID="{ac4f5246-0808-4b7a-a831-63217133e8ee}" Name="RequestedBy" StaticName="RequestedBy" DisplayName="RequestedBy" Type="Text" Required="FALSE" />
+            <Field ID="{f3e79253-f60e-41d1-beeb-859e4cd8a7f4}" Name="ApprovedBy" StaticName="ApprovedBy" DisplayName="ApprovedBy" Type="Text" Required="FALSE" />
+            <Field ID="{bd2db118-c439-432b-9b46-176f8fc62d74}" Name="StartedAt" StaticName="StartedAt" DisplayName="StartedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{52fcb882-2fcd-4268-947f-22c0db18accf}" Name="CompletedAt" StaticName="CompletedAt" DisplayName="CompletedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{fc806d74-7632-43f0-9567-79a8704a6f3b}" Name="SummaryMessage" StaticName="SummaryMessage" DisplayName="SummaryMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Written by Flow C." />
           </pnp:Fields>
         </pnp:ListInstance>
         <!-- RegenerationWorkItem: The work queue. One row per document per run. Written by Flow A, claimed and updated by Flow B. Persisting this state is what makes the job resumable, bounded in run duration, and immune to the 16 MB action output cap. -->
         <pnp:ListInstance Title="RegenerationWorkItem" Description="The work queue. One row per document per run. Written by Flow A, claimed and updated by Flow B. Persisting this state is what makes the job resumable, bounded in run duration, and immune to the 16 MB action output cap." TemplateType="100" Url="Lists/RegenerationWorkItem" EnableVersioning="true" EnableAttachments="false" ContentTypesEnabled="false">
           <pnp:Fields>
-            <Field ID="{9aa29dea-8fef-4725-a26e-b07ee22860c3}" Name="RunId" StaticName="RunId" DisplayName="RunId" Type="Text" Required="TRUE" Indexed="TRUE" Description="Groups items into a run. Queried by Flow B every cycle, so it must be indexed." />
-            <Field ID="{2345399f-c459-4390-9eca-c38f8118041e}" Name="SourceUniqueId" StaticName="SourceUniqueId" DisplayName="SourceUniqueId" Type="Text" Required="TRUE" Indexed="TRUE" Description="SharePoint GUID of the source document. Idempotency key." />
-            <Field ID="{2c2c1e8f-d9b4-4fc4-a3ce-c3c3c0e27be9}" Name="SourceUrl" StaticName="SourceUrl" DisplayName="SourceUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Server-relative path of the source document." />
-            <Field ID="{7916a0ab-d1fc-47d0-bb76-f443224eb40f}" Name="SourceSizeBytes" StaticName="SourceSizeBytes" DisplayName="SourceSizeBytes" Type="Number" Required="FALSE" Description="Size of the source document, copied from the index for planning and diagnostics.">
+            <Field ID="{9854f454-2a5e-43e9-9c1e-34dfd39a3a3b}" Name="RunId" StaticName="RunId" DisplayName="RunId" Type="Text" Required="TRUE" Indexed="TRUE" Description="Groups items into a run. Queried by Flow B every cycle, so it must be indexed." />
+            <Field ID="{6b4893dd-0d37-4ca9-9bb5-eaf114e11139}" Name="SourceUniqueId" StaticName="SourceUniqueId" DisplayName="SourceUniqueId" Type="Text" Required="TRUE" Indexed="TRUE" Description="SharePoint GUID of the source document. Idempotency key." />
+            <Field ID="{ac739bf9-04f5-4064-93b1-1c8f2f84cc61}" Name="SourceDocumentKey" StaticName="SourceDocumentKey" DisplayName="SourceDocumentKey" Type="Text" Required="TRUE" Indexed="TRUE" Description="Stable logical document key copied from DocumentIndex. Primary idempotency key across source replacement." />
+            <Field ID="{3c00a85f-e1b2-42f3-b9b8-541f3a9a23a2}" Name="SourceUrl" StaticName="SourceUrl" DisplayName="SourceUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Server-relative path of the source document." />
+            <Field ID="{821d5b0f-d579-4f07-8f4d-3c2b1d7c6b1e}" Name="SourceSizeBytes" StaticName="SourceSizeBytes" DisplayName="SourceSizeBytes" Type="Number" Required="FALSE" Description="Size of the source document, copied from the index for planning and diagnostics.">
               <Default>0</Default>
             </Field>
-            <Field ID="{ac4f5246-0808-4b7a-a831-63217133e8ee}" Name="TemplateName" StaticName="TemplateName" DisplayName="TemplateName" Type="Text" Required="TRUE" Indexed="TRUE" />
-            <Field ID="{f3e79253-f60e-41d1-beeb-859e4cd8a7f4}" Name="TemplateFingerprint" StaticName="TemplateFingerprint" DisplayName="TemplateFingerprint" Type="Text" Required="TRUE" Indexed="TRUE" Description="Recorded so cost filter F3 can skip already-current outputs on a re-run." />
-            <Field ID="{bd2db118-c439-432b-9b46-176f8fc62d74}" Name="TemplateUrl" StaticName="TemplateUrl" DisplayName="TemplateUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Exact template file path supplied to the agent for this source document." />
-            <Field ID="{52fcb882-2fcd-4268-947f-22c0db18accf}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Queried by Flow B every cycle, so it must be indexed.">
+            <Field ID="{d7c69ee8-5cdd-4577-ae5e-39cb651ca29e}" Name="TemplateName" StaticName="TemplateName" DisplayName="TemplateName" Type="Text" Required="TRUE" Indexed="TRUE" />
+            <Field ID="{fb790204-bcac-4651-81a6-236b02500f3e}" Name="TemplateFingerprint" StaticName="TemplateFingerprint" DisplayName="TemplateFingerprint" Type="Text" Required="TRUE" Indexed="TRUE" Description="Recorded so cost filter F3 can skip already-current outputs on a re-run." />
+            <Field ID="{4b431f51-209e-457e-904f-d5bff69899c4}" Name="TemplateUrl" StaticName="TemplateUrl" DisplayName="TemplateUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Exact template file path supplied to the agent for this source document." />
+            <Field ID="{5c6a54e9-e982-49d1-a6ee-873d3c1c78b1}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Queried by Flow B every cycle, so it must be indexed.">
               <CHOICES>
                 <CHOICE>Pending</CHOICE>
                 <CHOICE>InProgress</CHOICE>
@@ -118,25 +143,29 @@
               </CHOICES>
               <Default>Pending</Default>
             </Field>
-            <Field ID="{fc806d74-7632-43f0-9567-79a8704a6f3b}" Name="AttemptCount" StaticName="AttemptCount" DisplayName="AttemptCount" Type="Number" Required="FALSE" Description="Bounded by MaxAttempts, then parked as Failed. Unbounded retry on a deterministic failure exhausts quota.">
+            <Field ID="{a055d131-aa2f-49b0-9f82-4b6e2bdaf392}" Name="AttemptCount" StaticName="AttemptCount" DisplayName="AttemptCount" Type="Number" Required="FALSE" Description="Bounded by MaxAttempts, then parked as Failed. Unbounded retry on a deterministic failure exhausts quota.">
               <Default>0</Default>
             </Field>
-            <Field ID="{9854f454-2a5e-43e9-9c1e-34dfd39a3a3b}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" />
-            <Field ID="{6b4893dd-0d37-4ca9-9bb5-eaf114e11139}" Name="ValidationResult" StaticName="ValidationResult" DisplayName="ValidationResult" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Why an agent report was rejected or classified as failed." />
-            <Field ID="{ac739bf9-04f5-4064-93b1-1c8f2f84cc61}" Name="AgentResultJson" StaticName="AgentResultJson" DisplayName="AgentResultJson" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Verbatim parsed agent report, including every output, byte-verification verdict and archived filename. Source of truth for rollback." />
-            <Field ID="{3c00a85f-e1b2-42f3-b9b8-541f3a9a23a2}" Name="RollbackResultJson" StaticName="RollbackResultJson" DisplayName="RollbackResultJson" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Machine-readable record of restored files and rollback failures." />
-            <Field ID="{821d5b0f-d579-4f07-8f4d-3c2b1d7c6b1e}" Name="ClaimedAt" StaticName="ClaimedAt" DisplayName="ClaimedAt" Type="DateTime" Required="FALSE" Description="Used with StaleClaimMinutes to reap items stranded by a crashed batch." />
-            <Field ID="{d7c69ee8-5cdd-4577-ae5e-39cb651ca29e}" Name="ClaimedBy" StaticName="ClaimedBy" DisplayName="ClaimedBy" Type="Text" Required="FALSE" Description="Flow run identifier that claimed this item. Prevents double processing." />
-            <Field ID="{fb790204-bcac-4651-81a6-236b02500f3e}" Name="CompletedAt" StaticName="CompletedAt" DisplayName="CompletedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{7eb65f2f-48ae-4787-8001-c3017e3ff38a}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" />
+            <Field ID="{e7af76bd-0907-47b5-b629-b828e0be5bab}" Name="ValidationResult" StaticName="ValidationResult" DisplayName="ValidationResult" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Why an agent report was rejected or classified as failed." />
+            <Field ID="{d6ace370-f382-4714-9903-0ea25e86516a}" Name="AgentResultJson" StaticName="AgentResultJson" DisplayName="AgentResultJson" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Verbatim parsed agent report, including every output, byte-verification verdict and archived filename. Source of truth for rollback." />
+            <Field ID="{9ec0d210-a5d8-45bd-9403-57a2bf3f89fa}" Name="HasAgentManifest" StaticName="HasAgentManifest" DisplayName="HasAgentManifest" Type="Boolean" Required="FALSE" Indexed="TRUE" Description="True when AgentResultJson contains a parsed report or raw response requiring rollback review. Used instead of filtering the non-filterable Note payload.">
+              <Default>0</Default>
+            </Field>
+            <Field ID="{e1463f17-df93-44f3-ad83-fc1b33c61d14}" Name="RollbackResultJson" StaticName="RollbackResultJson" DisplayName="RollbackResultJson" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Machine-readable record of restored files and rollback failures." />
+            <Field ID="{0b682bf4-9e8a-4c0d-b47f-357b51a83c3d}" Name="ClaimedAt" StaticName="ClaimedAt" DisplayName="ClaimedAt" Type="DateTime" Required="FALSE" Description="Used with StaleClaimMinutes to reap items stranded by a crashed batch." />
+            <Field ID="{7ab77227-82ec-4ac4-9e9a-c0b1ae28d57d}" Name="ClaimedBy" StaticName="ClaimedBy" DisplayName="ClaimedBy" Type="Text" Required="FALSE" Description="Flow run identifier that claimed this item. Prevents double processing." />
+            <Field ID="{bc6fbeb4-c3fe-4188-ac4d-8b15035c3b6b}" Name="CompletedAt" StaticName="CompletedAt" DisplayName="CompletedAt" Type="DateTime" Required="FALSE" />
           </pnp:Fields>
         </pnp:ListInstance>
         <!-- WalkFrontier: The folder walk frontier for Flow E. Persisted rather than held in an array variable so the walk is resumable after a failed run, observable while running, and immune to the 16 MB action output cap. -->
         <pnp:ListInstance Title="WalkFrontier" Description="The folder walk frontier for Flow E. Persisted rather than held in an array variable so the walk is resumable after a failed run, observable while running, and immune to the 16 MB action output cap." TemplateType="100" Url="Lists/WalkFrontier" EnableVersioning="true" EnableAttachments="false" ContentTypesEnabled="false">
           <pnp:Fields>
-            <Field ID="{4b431f51-209e-457e-904f-d5bff69899c4}" Name="WalkRunId" StaticName="WalkRunId" DisplayName="WalkRunId" Type="Text" Required="TRUE" Indexed="TRUE" Description="Groups frontier rows into one backfill pass." />
-            <Field ID="{5c6a54e9-e982-49d1-a6ee-873d3c1c78b1}" Name="FolderUrl" StaticName="FolderUrl" DisplayName="FolderUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Server-relative path of a folder awaiting enumeration." />
-            <Field ID="{a055d131-aa2f-49b0-9f82-4b6e2bdaf392}" Name="Depth" StaticName="Depth" DisplayName="Depth" Type="Number" Required="FALSE" Description="Depth below the root folder. Supports breadth-first ordering." />
-            <Field ID="{7eb65f2f-48ae-4787-8001-c3017e3ff38a}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Queried every chunk, so it must be indexed.">
+            <Field ID="{65c83abb-91c7-4e28-9bbe-c014d8b6889a}" Name="WalkRunId" StaticName="WalkRunId" DisplayName="WalkRunId" Type="Text" Required="TRUE" Indexed="TRUE" Description="Groups frontier rows into one backfill pass." />
+            <Field ID="{6a257a3c-5508-4213-ab06-9337ef5d3cfd}" Name="FolderUrl" StaticName="FolderUrl" DisplayName="FolderUrl" Type="Note" Required="TRUE" NumLines="4" RichText="FALSE" Description="Server-relative path of a folder awaiting enumeration." />
+            <Field ID="{2359b265-e172-4658-a183-82a6ace140d1}" Name="FolderUniqueId" StaticName="FolderUniqueId" DisplayName="FolderUniqueId" Type="Text" Required="TRUE" Description="SharePoint folder GUID copied to child index rows as ParentFolderUniqueId." />
+            <Field ID="{d4c9097a-3fa4-40f7-8735-e398b25c4d67}" Name="Depth" StaticName="Depth" DisplayName="Depth" Type="Number" Required="FALSE" Description="Depth below the root folder. Supports breadth-first ordering." />
+            <Field ID="{a1e15993-85f4-48ab-b3f2-3ef0e2f2512b}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Queried every chunk, so it must be indexed.">
               <CHOICES>
                 <CHOICE>Pending</CHOICE>
                 <CHOICE>InProgress</CHOICE>
@@ -145,8 +174,30 @@
               </CHOICES>
               <Default>Pending</Default>
             </Field>
-            <Field ID="{e7af76bd-0907-47b5-b629-b828e0be5bab}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Recorded when a folder cannot be enumerated, e.g. a single folder with more than 5,000 direct children throttling its own call." />
-            <Field ID="{d6ace370-f382-4714-9903-0ea25e86516a}" Name="VisitedAt" StaticName="VisitedAt" DisplayName="VisitedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{dcc020ac-1e39-4911-a8c9-9943ea0dfb90}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Recorded when a folder cannot be enumerated, e.g. a single folder with more than 5,000 direct children throttling its own call." />
+            <Field ID="{63b323d2-c67a-430b-a25d-3e7d40e5343e}" Name="VisitedAt" StaticName="VisitedAt" DisplayName="VisitedAt" Type="DateTime" Required="FALSE" />
+          </pnp:Fields>
+        </pnp:ListInstance>
+        <!-- IndexWalkRun: Header and reconciliation cursor for one complete index backfill. A walk is not complete until its frontier is drained and stale rows from the prior snapshot are excluded. -->
+        <pnp:ListInstance Title="IndexWalkRun" Description="Header and reconciliation cursor for one complete index backfill. A walk is not complete until its frontier is drained and stale rows from the prior snapshot are excluded." TemplateType="100" Url="Lists/IndexWalkRun" EnableVersioning="true" EnableAttachments="false" ContentTypesEnabled="false">
+          <pnp:Fields>
+            <Field ID="{e6719fbd-6d70-4af2-83bf-f5ee08ee2869}" Name="WalkRunId" StaticName="WalkRunId" DisplayName="WalkRunId" Type="Text" Required="TRUE" Indexed="TRUE" EnforceUniqueValues="TRUE" Description="Groups one complete traversal and reconciliation pass." />
+            <Field ID="{1f549931-e60c-400f-8aa7-235104a86b1b}" Name="Status" StaticName="Status" DisplayName="Status" Type="Choice" Required="TRUE" Indexed="TRUE" Description="Planning relies only on Completed snapshots. Folder deletion can queue one follow-up walk behind an active snapshot.">
+              <CHOICES>
+                <CHOICE>Queued</CHOICE>
+                <CHOICE>Running</CHOICE>
+                <CHOICE>Reconciling</CHOICE>
+                <CHOICE>Completed</CHOICE>
+                <CHOICE>CompletedWithErrors</CHOICE>
+              </CHOICES>
+              <Default>Running</Default>
+            </Field>
+            <Field ID="{222d3014-93ca-488f-9904-238014451280}" Name="ReconciliationCursorId" StaticName="ReconciliationCursorId" DisplayName="ReconciliationCursorId" Type="Number" Required="FALSE" Description="Highest DocumentIndex item ID reconciled against this walk.">
+              <Default>0</Default>
+            </Field>
+            <Field ID="{fe43042e-fd63-49cd-b395-a2f66af850a4}" Name="StartedAt" StaticName="StartedAt" DisplayName="StartedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{b9f3ef5f-7da0-438e-aff1-55941be3579e}" Name="CompletedAt" StaticName="CompletedAt" DisplayName="CompletedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{7b7b1707-740b-41aa-a82b-984b8c5e2918}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" />
           </pnp:Fields>
         </pnp:ListInstance>
       </pnp:Lists>

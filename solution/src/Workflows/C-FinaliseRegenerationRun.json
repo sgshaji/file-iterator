@@ -1,188 +1,314 @@
 {
-  "$comment": "FLOW C - Finalise Regeneration Run. Closes a run once its queue is drained, reports the outcome, and exposes a retry path for failed items. Reports AgentCallCount against PlannedCount - the metric that holds the cost model accountable. See docs/Template-Regeneration-Solution-Design.md section 7.",
+  "$comment": "FLOW C - Finalise Regeneration Run. Aggregates terminal work items in bounded pages and closes the run only after the queue drains.",
   "properties": {
     "connectionReferences": {
       "shared_sharepointonline": {
         "runtimeSource": "embedded",
-        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
-        "api": { "name": "shared_sharepointonline" }
-      },
-      "shared_office365": {
-        "runtimeSource": "embedded",
-        "connection": { "connectionReferenceLogicalName": "fi_sharedoffice365" },
-        "api": { "name": "shared_office365" }
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
       }
     },
     "definition": {
       "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
       "contentVersion": "1.0.0.0",
       "parameters": {
-        "$connections": { "defaultValue": {}, "type": "Object" },
-        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
       },
       "triggers": {
         "Recurrence": {
           "type": "Recurrence",
-          "recurrence": { "frequency": "Minute", "interval": 30 }
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 5
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          }
         }
       },
       "actions": {
-        "Get_running_runs": {
+        "Get_run_to_advance": {
           "runAfter": {},
           "type": "OpenApiConnection",
           "inputs": {
             "host": {
               "connectionName": "shared_sharepointonline",
-              "operationId": "GetItems",
-              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+              "operationId": "GetItems"
             },
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "$filter": "Status eq 'Running'",
-              "$top": 20
+              "$filter": "Status eq 'Running' or Status eq 'Finalizing'",
+              "$orderby": "Created asc",
+              "$top": 1
             },
             "authentication": "@parameters('$authentication')"
           }
         },
-        "For_each_running_run": {
-          "runAfter": { "Get_running_runs": ["Succeeded"] },
-          "type": "Foreach",
-          "foreach": "@body('Get_running_runs')?['value']",
-          "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+        "Exit_if_no_run": {
+          "runAfter": {
+            "Get_run_to_advance": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "equals": [
+              "@length(body('Get_run_to_advance')?['value'])",
+              0
+            ]
+          },
           "actions": {
-            "Count_outstanding_items": {
+            "Terminate_idle": {
+              "runAfter": {},
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Succeeded"
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        },
+        "HANDLE_running_run": {
+          "runAfter": {
+            "Exit_if_no_run": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "equals": [
+              "@first(body('Get_run_to_advance')?['value'])?['Status']?['Value']",
+              "Running"
+            ]
+          },
+          "actions": {
+            "Get_outstanding_item": {
               "runAfter": {},
               "type": "OpenApiConnection",
               "inputs": {
                 "host": {
                   "connectionName": "shared_sharepointonline",
-                  "operationId": "GetItems",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                  "operationId": "GetItems"
                 },
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                  "$filter": "RunId eq '@{items('For_each_running_run')?['RunId']}' and (Status eq 'Pending' or Status eq 'InProgress')",
+                  "$filter": "RunId eq '@{first(body('Get_run_to_advance')?['value'])?['RunId']}' and (Status eq 'Pending' or Status eq 'InProgress')",
                   "$top": 1
                 },
                 "authentication": "@parameters('$authentication')"
               }
             },
-            "Only_close_when_queue_is_drained": {
-              "runAfter": { "Count_outstanding_items": ["Succeeded"] },
+            "Begin_finalization_when_drained": {
+              "runAfter": {
+                "Get_outstanding_item": [
+                  "Succeeded"
+                ]
+              },
               "type": "If",
-              "expression": { "equals": [ "@length(body('Count_outstanding_items')?['value'])", 0 ] },
+              "expression": {
+                "equals": [
+                  "@length(body('Get_outstanding_item')?['value'])",
+                  0
+                ]
+              },
               "actions": {
-                "Get_succeeded_items": {
+                "Mark_run_finalizing": {
                   "runAfter": {},
                   "type": "OpenApiConnection",
                   "inputs": {
                     "host": {
                       "connectionName": "shared_sharepointonline",
-                      "operationId": "GetItems",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                      "$filter": "RunId eq '@{items('For_each_running_run')?['RunId']}' and Status eq 'Succeeded'",
-                      "$top": 5000
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                },
-                "Get_failed_items": {
-                  "runAfter": { "Get_succeeded_items": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "GetItems",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                      "$filter": "RunId eq '@{items('For_each_running_run')?['RunId']}' and Status eq 'Failed'",
-                      "$top": 5000
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                },
-                "Get_skipped_items": {
-                  "runAfter": { "Get_failed_items": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "GetItems",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                      "$filter": "RunId eq '@{items('For_each_running_run')?['RunId']}' and Status eq 'Skipped'",
-                      "$top": 5000
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                },
-                "Compose_summary": {
-                  "runAfter": { "Get_skipped_items": ["Succeeded"] },
-                  "type": "Compose",
-                  "inputs": "Run @{items('For_each_running_run')?['RunId']}\nTemplate: @{items('For_each_running_run')?['TemplateName']}\n\nPlanned:   @{items('For_each_running_run')?['PlannedCount']}\nSucceeded: @{length(body('Get_succeeded_items')?['value'])}\nSkipped:   @{length(body('Get_skipped_items')?['value'])}\nFailed:    @{length(body('Get_failed_items')?['value'])}\n\nAgent calls consumed: @{items('For_each_running_run')?['AgentCallCount']}\n\nCOST CHECK: one PDF/DOCX document group should produce at most one agent call. Re-publishing the same template fingerprint should produce no new work items.\n\n@{if(greater(length(body('Get_failed_items')?['value']), 0), 'Failed items are parked for review. Reset them to Pending to retry, or run Flow D to roll the run back.', 'No failures.')}",
-                  "description": "The summary leads with the cost metric deliberately. It is the number that tells you whether the design is behaving."
-                },
-                "Close_run": {
-                  "runAfter": { "Compose_summary": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "PatchItem",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                      "operationId": "PatchItem"
                     },
                     "parameters": {
                       "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                       "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                      "id": "@items('For_each_running_run')?['ID']",
-                      "item/Status/Value": "@{if(greater(length(body('Get_failed_items')?['value']), 0), 'CompletedWithErrors', 'Completed')}",
-                      "item/SucceededCount": "@length(body('Get_succeeded_items')?['value'])",
-                      "item/FailedCount": "@length(body('Get_failed_items')?['value'])",
-                      "item/SkippedCount": "@length(body('Get_skipped_items')?['value'])",
-                      "item/CompletedAt": "@utcNow()",
-                      "item/SummaryMessage": "@outputs('Compose_summary')"
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  },
-                  "description": "Only a Completed run's fingerprint is compared by cost filter F2 on the next template publish, so closing the run correctly is what arms the no-op suppression."
-                },
-                "Notify_owner": {
-                  "runAfter": { "Close_run": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_office365",
-                      "operationId": "SendEmailV2",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365"
-                    },
-                    "parameters": {
-                      "emailMessage/To": "@parameters('fi_NotificationRecipient (fi_NotificationRecipient)')",
-                      "emailMessage/Subject": "@{if(greater(length(body('Get_failed_items')?['value']), 0), 'Regeneration run completed WITH ERRORS', 'Regeneration run completed')} - @{items('For_each_running_run')?['TemplateName']}",
-                      "emailMessage/Body": "<pre>@{outputs('Compose_summary')}</pre>"
+                      "id": "@first(body('Get_run_to_advance')?['value'])?['ID']",
+                      "item/Status/Value": "Finalizing",
+                      "item/FinalizationCursorId": 0,
+                      "item/SucceededCount": 0,
+                      "item/FailedCount": 0,
+                      "item/SkippedCount": 0
                     },
                     "authentication": "@parameters('$authentication')"
                   }
                 }
               },
-              "else": { "actions": {} }
+              "else": {
+                "actions": {}
+              }
             }
+          },
+          "else": {
+            "actions": {}
+          }
+        },
+        "HANDLE_finalizing_run": {
+          "runAfter": {
+            "HANDLE_running_run": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "equals": [
+              "@first(body('Get_run_to_advance')?['value'])?['Status']?['Value']",
+              "Finalizing"
+            ]
+          },
+          "actions": {
+            "Get_terminal_page": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                  "operationId": "GetItems"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                  "$filter": "RunId eq '@{first(body('Get_run_to_advance')?['value'])?['RunId']}' and ID gt @{int(coalesce(first(body('Get_run_to_advance')?['value'])?['FinalizationCursorId'], 0))}",
+                  "$orderby": "ID asc",
+                  "$top": 500
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "description": "Bounded terminal-state page. Counts are accumulated on the run instead of loading all work items into one action."
+            },
+            "HANDLE_terminal_page": {
+              "runAfter": {
+                "Get_terminal_page": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If",
+              "expression": {
+                "greater": [
+                  "@length(body('Get_terminal_page')?['value'])",
+                  0
+                ]
+              },
+              "actions": {
+                "Filter_succeeded": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Get_terminal_page')?['value']",
+                    "where": "@equals(item()?['Status']?['Value'], 'Succeeded')"
+                  }
+                },
+                "Filter_failed": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Get_terminal_page')?['value']",
+                    "where": "@equals(item()?['Status']?['Value'], 'Failed')"
+                  }
+                },
+                "Filter_skipped": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Get_terminal_page')?['value']",
+                    "where": "@equals(item()?['Status']?['Value'], 'Skipped')"
+                  }
+                },
+                "Accumulate_terminal_counts": {
+                  "runAfter": {
+                    "Filter_succeeded": [
+                      "Succeeded"
+                    ],
+                    "Filter_failed": [
+                      "Succeeded"
+                    ],
+                    "Filter_skipped": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                      "operationId": "PatchItem"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                      "id": "@first(body('Get_run_to_advance')?['value'])?['ID']",
+                      "item/FinalizationCursorId": "@last(body('Get_terminal_page')?['value'])?['ID']",
+                      "item/SucceededCount": "@add(int(coalesce(first(body('Get_run_to_advance')?['value'])?['SucceededCount'], 0)), length(body('Filter_succeeded')))",
+                      "item/FailedCount": "@add(int(coalesce(first(body('Get_run_to_advance')?['value'])?['FailedCount'], 0)), length(body('Filter_failed')))",
+                      "item/SkippedCount": "@add(int(coalesce(first(body('Get_run_to_advance')?['value'])?['SkippedCount'], 0)), length(body('Filter_skipped')))"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Compose_summary": {
+                    "runAfter": {},
+                    "type": "Compose",
+                    "inputs": "Run @{first(body('Get_run_to_advance')?['value'])?['RunId']}\nTemplate: @{first(body('Get_run_to_advance')?['value'])?['TemplateName']}\n\nPlanned: @{first(body('Get_run_to_advance')?['value'])?['PlannedCount']}\nSucceeded: @{first(body('Get_run_to_advance')?['value'])?['SucceededCount']}\nSkipped: @{first(body('Get_run_to_advance')?['value'])?['SkippedCount']}\nFailed: @{first(body('Get_run_to_advance')?['value'])?['FailedCount']}\nAgent calls: @{first(body('Get_run_to_advance')?['value'])?['AgentCallCount']}\n\n@{if(greater(int(coalesce(first(body('Get_run_to_advance')?['value'])?['FailedCount'], 0)), 0), 'Correct the cause, roll back side-effecting failed attempts where required, then publish the same template version to plan only outstanding sources.', 'No failures.')}"
+                  },
+                  "Close_run": {
+                    "runAfter": {
+                      "Compose_summary": [
+                        "Succeeded"
+                      ]
+                    },
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                        "operationId": "PatchItem"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                        "id": "@first(body('Get_run_to_advance')?['value'])?['ID']",
+                        "item/Status/Value": "@{if(greater(int(coalesce(first(body('Get_run_to_advance')?['value'])?['FailedCount'], 0)), 0), 'CompletedWithErrors', 'Completed')}",
+                        "item/CompletedAt": "@utcNow()",
+                        "item/SummaryMessage": "@outputs('Compose_summary')"
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {}
           }
         }
       },
       "outputs": {}
-    }
-  },
-  "schemaVersion": "1.0.0.0"
+    },
+    "schemaVersion": "1.0.0.0"
+  }
 }

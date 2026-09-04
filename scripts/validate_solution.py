@@ -37,7 +37,7 @@ CONFIG_FILE = os.path.join(ROOT, "solution", "config", "environment-variables.js
 BUILTIN_FIELDS = {
     "ID", "Id", "Title", "Created", "Modified", "Editor", "Author",
     "Length", "Name", "UniqueId", "ServerRelativeUrl", "TimeLastModified",
-    "Folders", "Files", "d", "value", "body",
+    "Folders", "Files", "ListItemAllFields", "d", "value", "body",
     "status", "reason", "generatedContent", "outcome", "responses",
     "responder", "email", "template", "kind", "destinationFolderPath",
     "outputFileName", "bytesSent", "bytesStored", "verdict", "verdictNote",
@@ -48,12 +48,17 @@ BUILTIN_FIELDS = {
 # columns as a list grows -- exactly the threshold problem this solution
 # exists to work around, so it must not be reintroduced in our own lists.
 REQUIRED_INDEXES = {
-    "DocumentIndex": {"UniqueId", "DocumentRole", "ParentFolderUrl"},
-    "RegenerationRun": {"RunId", "Status", "TemplateName"},
+    "DocumentIndex": {
+        "UniqueId", "ListItemId", "ParentFolderUniqueId", "DocumentStem", "DocumentKey",
+        "DocumentRole", "IsExcluded"
+    },
+    "RegenerationRun": {"RunId", "RunKey", "Status", "TemplateName"},
     "RegenerationWorkItem": {
-        "RunId", "SourceUniqueId", "TemplateName", "TemplateFingerprint", "Status"
+        "RunId", "SourceUniqueId", "SourceDocumentKey", "TemplateName",
+        "TemplateFingerprint", "Status", "HasAgentManifest"
     },
     "WalkFrontier": {"WalkRunId", "Status"},
+    "IndexWalkRun": {"WalkRunId", "Status"},
 }
 
 errors = []
@@ -86,6 +91,20 @@ def check_run_after(actions, scope, filename):
                 check_run_after(case["actions"], scope + name + "/case/", filename)
 
 
+def walk_actions(actions):
+    for name, action in (actions or {}).items():
+        yield name, action
+        for nested in (
+            action.get("actions"),
+            (action.get("else") or {}).get("actions"),
+        ):
+            for item in walk_actions(nested):
+                yield item
+        for case in (action.get("cases") or {}).values():
+            for item in walk_actions(case.get("actions")):
+                yield item
+
+
 def main():
     if not os.path.isdir(WORKFLOW_DIR):
         errors.append("workflow directory not found: %s" % WORKFLOW_DIR)
@@ -94,12 +113,22 @@ def main():
 
     lists = load_json(LISTS_FILE)["lists"]
     defined_columns = set()
+    note_columns = set()
     for definition in lists:
         for column in definition["columns"]:
             defined_columns.add(column["name"])
+            if column["type"] == "Note":
+                note_columns.add(column["name"])
 
     # Check 7 -- required indexes.
     for definition in lists:
+        for column in definition["columns"]:
+            if column.get("indexed") and column.get("type") == "Note":
+                errors.append(
+                    "provisioning/lists.json: %s.%s is a multi-line Note column "
+                    "and cannot be indexed in SharePoint"
+                    % (definition["name"], column["name"])
+                )
         indexed = {c["name"] for c in definition["columns"] if c.get("indexed")}
         for required in REQUIRED_INDEXES.get(definition["name"], set()):
             if required not in indexed:
@@ -149,6 +178,31 @@ def main():
 
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
+
+        if "filter(" in text:
+            errors.append(
+                "%s: uses unsupported expression function filter(); use a "
+                "Query/Filter array action instead" % filename
+            )
+
+        action_types = {name: action.get("type") for name, action in walk_actions(actions)}
+        for reference in re.findall(r"result\('([^']+)'\)", text):
+            if action_types.get(reference) not in {"Scope", "Foreach", "Until"}:
+                errors.append(
+                    "%s: result('%s') targets %s; result() only accepts a "
+                    "scoped action" % (filename, reference, action_types.get(reference))
+                )
+
+        for filter_expression in re.findall(
+            r'"\$filter"\s*:\s*"([^"]*)"', text
+        ):
+            for field in note_columns:
+                if re.search(r"\b%s\b" % re.escape(field), filter_expression):
+                    errors.append(
+                        "%s: OData filter references Note column '%s', which "
+                        "SharePoint does not support filtering"
+                        % (filename, field)
+                    )
 
         used_vars |= set(
             re.findall(r"parameters\('(fi_[A-Za-z]+) \(fi_[A-Za-z]+\)'\)", text)

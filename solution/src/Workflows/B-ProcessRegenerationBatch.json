@@ -41,14 +41,19 @@
             "frequency": "Minute",
             "interval": 15
           },
-          "description": "The 15-minute recurrence and fi_BatchSize jointly throttle the 600 calls/min connector limit and agent capacity consumption. Recurrence is a design-time Power Automate setting and is reviewed in source rather than exposed as an ignored environment variable."
+          "description": "The 15-minute recurrence and fi_BatchSize jointly throttle the 600 calls/min connector limit and agent capacity consumption. Recurrence is a design-time Power Automate setting and is reviewed in source rather than exposed as an ignored environment variable.",
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          }
         }
       },
       "actions": {
         "Reap_stale_claims": {
           "runAfter": {},
           "type": "Scope",
-          "description": "Items left InProgress beyond StaleClaimMinutes belong to a run that died. Without reaping, a crashed batch strands its claimed items forever.",
+          "description": "Items left InProgress beyond StaleClaimMinutes belong to a run that died. They are parked rather than automatically retried because the agent may have produced side effects before the flow lost its response.",
           "actions": {
             "Get_stale_items": {
               "runAfter": {},
@@ -95,9 +100,9 @@
                       "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                       "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                       "id": "@items('For_each_stale_item')?['ID']",
-                      "item/Status/Value": "Pending",
+                      "item/Status/Value": "Failed",
                       "item/ClaimedBy": "",
-                      "item/ErrorMessage": "Claim expired and was released for retry."
+                      "item/ErrorMessage": "Claim expired. The item was parked for review because the previous run may have produced side effects."
                     },
                     "authentication": "@parameters('$authentication')"
                   }
@@ -326,6 +331,11 @@
                             "Succeeded"
                           ]
                         },
+                        "runtimeConfiguration": {
+                          "retryPolicy": {
+                            "type": "None"
+                          }
+                        },
                         "type": "OpenApiConnection",
                         "inputs": {
                           "host": {
@@ -356,9 +366,32 @@
                         },
                         "description": "Counted whether or not it succeeded because a failed call can still consume capacity."
                       },
-                      "CAPTURE_agent_response": {
+                      "Persist_agent_call_count": {
                         "runAfter": {
                           "Count_agent_call": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "OpenApiConnection",
+                        "inputs": {
+                          "host": {
+                            "connectionName": "shared_sharepointonline",
+                            "operationId": "PatchItem",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                          },
+                          "parameters": {
+                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                            "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                            "id": "@first(body('Get_active_run')?['value'])?['ID']",
+                            "item/AgentCallCount": "@add(int(coalesce(first(body('Get_active_run')?['value'])?['AgentCallCount'], 0)), variables('AgentCallsThisBatch'))"
+                          },
+                          "authentication": "@parameters('$authentication')"
+                        },
+                        "description": "Persist cost immediately after each metered call so a later batch crash cannot erase the count."
+                      },
+                      "CAPTURE_agent_response": {
+                        "runAfter": {
+                          "Persist_agent_call_count": [
                             "Succeeded"
                           ]
                         },
@@ -376,122 +409,147 @@
                         "inputs": "@if(empty(coalesce(body('STEP_2_Invoke_agent')?['text'], body('STEP_2_Invoke_agent')?['response'], body('STEP_2_Invoke_agent')?['output'])), string(outputs('CAPTURE_agent_response')), string(coalesce(body('STEP_2_Invoke_agent')?['text'], body('STEP_2_Invoke_agent')?['response'], body('STEP_2_Invoke_agent')?['output'])))",
                         "description": "Accept a wrapped text/response/output property or a bare JSON object. The fallback checks emptiness before choosing, so an absent wrapper cannot suppress the raw response."
                       },
-                      "PARSE_agent_report": {
+                      "TRY_parse_agent_report": {
                         "runAfter": {
                           "EXTRACT_reply_text": [
                             "Succeeded"
                           ]
                         },
-                        "type": "ParseJson",
-                        "inputs": {
-                          "content": "@outputs('EXTRACT_reply_text')",
-                          "schema": {
-                            "type": "object",
-                            "required": [
-                              "status",
-                              "reason",
-                              "sourceFile",
-                              "sourceChosenBecause",
-                              "outputs",
-                              "notes"
-                            ],
-                            "properties": {
-                              "status": {
-                                "type": "string",
-                                "enum": [
-                                  "OK",
-                                  "FAILED",
-                                  "SKIPPED"
-                                ]
-                              },
-                              "reason": {
-                                "type": "string"
-                              },
-                              "sourceFile": {
-                                "type": "string"
-                              },
-                              "sourceChosenBecause": {
-                                "type": "string"
-                              },
-                              "notes": {
-                                "type": "string"
-                              },
-                              "outputs": {
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "required": [
-                                    "template",
-                                    "kind",
-                                    "destinationFolderPath",
-                                    "outputFileName",
-                                    "bytesSent",
-                                    "bytesStored",
-                                    "verdict",
-                                    "archivedAs"
-                                  ],
-                                  "properties": {
-                                    "template": {
-                                      "type": "string"
-                                    },
-                                    "kind": {
-                                      "type": "string",
-                                      "enum": [
-                                        "pd",
-                                        "ad"
-                                      ]
-                                    },
-                                    "destinationFolderPath": {
-                                      "type": "string"
-                                    },
-                                    "outputFileName": {
-                                      "type": "string"
-                                    },
-                                    "bytesSent": {
-                                      "type": "integer"
-                                    },
-                                    "bytesStored": {
-                                      "type": "integer"
-                                    },
-                                    "verdict": {
-                                      "type": "string",
-                                      "enum": [
-                                        "PASS",
-                                        "FAIL",
-                                        "CHECK"
-                                      ]
-                                    },
-                                    "verdictNote": {
-                                      "type": "string"
-                                    },
-                                    "missingFields": {
-                                      "type": "array"
-                                    },
-                                    "removed": {
-                                      "type": "array"
-                                    },
-                                    "highlightCleared": {
-                                      "type": "integer"
-                                    },
-                                    "archivedAs": {
-                                      "type": "array",
-                                      "items": {
-                                        "type": "string"
+                        "type": "Scope",
+                        "actions": {
+                          "PARSE_agent_report": {
+                            "runAfter": {},
+                            "type": "ParseJson",
+                            "inputs": {
+                              "content": "@outputs('EXTRACT_reply_text')",
+                              "schema": {
+                                "type": "object",
+                                "required": [
+                                  "status",
+                                  "reason",
+                                  "sourceFile",
+                                  "sourceChosenBecause",
+                                  "outputs",
+                                  "notes"
+                                ],
+                                "properties": {
+                                  "status": {
+                                    "type": "string",
+                                    "enum": [
+                                      "OK",
+                                      "FAILED",
+                                      "SKIPPED"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  },
+                                  "sourceFile": {
+                                    "type": "string"
+                                  },
+                                  "sourceChosenBecause": {
+                                    "type": "string"
+                                  },
+                                  "notes": {
+                                    "type": "string"
+                                  },
+                                  "outputs": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "template",
+                                        "kind",
+                                        "destinationFolderPath",
+                                        "outputFileName",
+                                        "bytesSent",
+                                        "bytesStored",
+                                        "verdict",
+                                        "archivedAs"
+                                      ],
+                                      "properties": {
+                                        "template": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "pd",
+                                            "ad"
+                                          ]
+                                        },
+                                        "destinationFolderPath": {
+                                          "type": "string"
+                                        },
+                                        "outputFileName": {
+                                          "type": "string"
+                                        },
+                                        "bytesSent": {
+                                          "type": [
+                                            "integer",
+                                            "null"
+                                          ]
+                                        },
+                                        "bytesStored": {
+                                          "type": [
+                                            "integer",
+                                            "null"
+                                          ]
+                                        },
+                                        "verdict": {
+                                          "type": "string",
+                                          "enum": [
+                                            "PASS",
+                                            "FAIL",
+                                            "CHECK"
+                                          ]
+                                        },
+                                        "verdictNote": {
+                                          "type": "string"
+                                        },
+                                        "missingFields": {
+                                          "type": "array"
+                                        },
+                                        "removed": {
+                                          "type": "array"
+                                        },
+                                        "highlightCleared": {
+                                          "type": "integer"
+                                        },
+                                        "archivedAs": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        }
                                       }
                                     }
                                   }
                                 }
                               }
-                            }
+                            },
+                            "description": "The schema mirrors pd_tools.py report output. Invalid envelopes are classified separately from agent-declared failures."
                           }
                         },
-                        "description": "The schema mirrors pd_tools.py report output. Invalid envelopes are classified separately from agent-declared failures."
+                        "description": "Scope status is the supported signal for whether ParseJson succeeded."
+                      },
+                      "FILTER_non_pass_outputs": {
+                        "runAfter": {
+                          "TRY_parse_agent_report": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "Query",
+                        "inputs": {
+                          "from": "@body('PARSE_agent_report')?['outputs']",
+                          "where": "@not(equals(item()?['verdict'], 'PASS'))"
+                        },
+                        "description": "Defence in depth: top-level OK is accepted only when every output independently reports a PASS byte-verification verdict."
                       },
                       "HANDLE_parsed_report": {
                         "runAfter": {
-                          "PARSE_agent_report": [
-                            "Succeeded",
-                            "Failed"
+                          "FILTER_non_pass_outputs": [
+                            "Succeeded"
                           ]
                         },
                         "type": "If",
@@ -499,159 +557,155 @@
                           "and": [
                             {
                               "equals": [
-                                "@result('PARSE_agent_report')[0]['status']",
-                                "Succeeded"
+                                "@body('PARSE_agent_report')?['status']",
+                                "OK"
+                              ]
+                            },
+                            {
+                              "greater": [
+                                "@length(body('PARSE_agent_report')?['outputs'])",
+                                0
+                              ]
+                            },
+                            {
+                              "equals": [
+                                "@length(body('FILTER_non_pass_outputs'))",
+                                0
                               ]
                             }
                           ]
                         },
                         "actions": {
-                          "HANDLE_agent_ok": {
+                          "Mark_succeeded": {
                             "runAfter": {},
-                            "type": "If",
-                            "expression": {
-                              "and": [
-                                {
-                                  "equals": [
-                                    "@body('PARSE_agent_report')?['status']",
-                                    "OK"
-                                  ]
-                                },
-                                {
-                                  "greater": [
-                                    "@length(body('PARSE_agent_report')?['outputs'])",
-                                    0
-                                  ]
-                                }
-                              ]
-                            },
-                            "actions": {
-                              "Mark_succeeded": {
-                                "runAfter": {},
-                                "type": "OpenApiConnection",
-                                "inputs": {
-                                  "host": {
-                                    "connectionName": "shared_sharepointonline",
-                                    "operationId": "PatchItem",
-                                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                                  },
-                                  "parameters": {
-                                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                    "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                                    "id": "@items('For_each_work_item')?['ID']",
-                                    "item/Status/Value": "Succeeded",
-                                    "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                                    "item/ValidationResult": "Agent status OK; every reported output has verdict PASS and stored byte counts were verified by pd_tools.py.",
-                                    "item/ErrorMessage": "",
-                                    "item/CompletedAt": "@utcNow()"
-                                  },
-                                  "authentication": "@parameters('$authentication')"
-                                }
-                              }
-                            },
-                            "else": {
-                              "actions": {
-                                "HANDLE_agent_skipped": {
-                                  "runAfter": {},
-                                  "type": "If",
-                                  "expression": {
-                                    "and": [
-                                      {
-                                        "equals": [
-                                          "@body('PARSE_agent_report')?['status']",
-                                          "SKIPPED"
-                                        ]
-                                      },
-                                      {
-                                        "equals": [
-                                          "@body('PARSE_agent_report')?['reason']",
-                                          "another-format-preferred"
-                                        ]
-                                      }
-                                    ]
-                                  },
-                                  "actions": {
-                                    "Mark_skipped": {
-                                      "runAfter": {},
-                                      "type": "OpenApiConnection",
-                                      "inputs": {
-                                        "host": {
-                                          "connectionName": "shared_sharepointonline",
-                                          "operationId": "PatchItem",
-                                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                                        },
-                                        "parameters": {
-                                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                          "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                                          "id": "@items('For_each_work_item')?['ID']",
-                                          "item/Status/Value": "Skipped",
-                                          "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                                          "item/ValidationResult": "Agent reported the normal another-format-preferred outcome.",
-                                          "item/ErrorMessage": "",
-                                          "item/CompletedAt": "@utcNow()"
-                                        },
-                                        "authentication": "@parameters('$authentication')"
-                                      }
-                                    }
-                                  },
-                                  "else": {
-                                    "actions": {
-                                      "Mark_agent_failed_or_retry": {
-                                        "runAfter": {},
-                                        "type": "OpenApiConnection",
-                                        "inputs": {
-                                          "host": {
-                                            "connectionName": "shared_sharepointonline",
-                                            "operationId": "PatchItem",
-                                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                                          },
-                                          "parameters": {
-                                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                                            "id": "@items('For_each_work_item')?['ID']",
-                                            "item/Status/Value": "@{if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
-                                            "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                                            "item/ValidationResult": "@{concat('Agent status ', body('PARSE_agent_report')?['status'], '; reason=', body('PARSE_agent_report')?['reason'])}",
-                                            "item/ErrorMessage": "@{take(coalesce(body('PARSE_agent_report')?['notes'], body('PARSE_agent_report')?['reason']), 4000)}",
-                                            "item/CompletedAt": "@utcNow()"
-                                          },
-                                          "authentication": "@parameters('$authentication')"
-                                        },
-                                        "description": "FAILED reports are retried only to MaxAttempts, then parked for review."
-                                      }
-                                    }
-                                  }
-                                }
-                              }
+                            "type": "OpenApiConnection",
+                            "inputs": {
+                              "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "PatchItem",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                              },
+                              "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                "id": "@items('For_each_work_item')?['ID']",
+                                "item/Status/Value": "Succeeded",
+                                "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                                "item/HasAgentManifest": true,
+                                "item/ValidationResult": "Agent status OK; every reported output has verdict PASS and stored byte counts were verified by pd_tools.py.",
+                                "item/ErrorMessage": "",
+                                "item/CompletedAt": "@utcNow()"
+                              },
+                              "authentication": "@parameters('$authentication')"
                             }
                           }
                         },
                         "else": {
                           "actions": {
-                            "Mark_unparseable_or_retry": {
+                            "HANDLE_agent_skipped": {
                               "runAfter": {},
-                              "type": "OpenApiConnection",
-                              "inputs": {
-                                "host": {
-                                  "connectionName": "shared_sharepointonline",
-                                  "operationId": "PatchItem",
-                                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                                },
-                                "parameters": {
-                                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                                  "id": "@items('For_each_work_item')?['ID']",
-                                  "item/Status/Value": "@{if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
-                                  "item/ValidationResult": "Agent reply could not be parsed as the contracted JSON report.",
-                                  "item/ErrorMessage": "@{take(string(outputs('CAPTURE_agent_response')), 4000)}",
-                                  "item/CompletedAt": "@utcNow()"
-                                },
-                                "authentication": "@parameters('$authentication')"
+                              "type": "If",
+                              "expression": {
+                                "and": [
+                                  {
+                                    "equals": [
+                                      "@body('PARSE_agent_report')?['status']",
+                                      "SKIPPED"
+                                    ]
+                                  },
+                                  {
+                                    "equals": [
+                                      "@body('PARSE_agent_report')?['reason']",
+                                      "another-format-preferred"
+                                    ]
+                                  }
+                                ]
                               },
-                              "description": "An unreadable envelope is retained verbatim and retried only to MaxAttempts."
+                              "actions": {
+                                "Mark_skipped": {
+                                  "runAfter": {},
+                                  "type": "OpenApiConnection",
+                                  "inputs": {
+                                    "host": {
+                                      "connectionName": "shared_sharepointonline",
+                                      "operationId": "PatchItem",
+                                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                    },
+                                    "parameters": {
+                                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                      "id": "@items('For_each_work_item')?['ID']",
+                                      "item/Status/Value": "Failed",
+                                      "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                                      "item/HasAgentManifest": true,
+                                      "item/ValidationResult": "Source preference changed after planning; no conversion was produced.",
+                                      "item/ErrorMessage": "Publish the same template version again to re-plan the current preferred source.",
+                                      "item/CompletedAt": "@utcNow()"
+                                    },
+                                    "authentication": "@parameters('$authentication')"
+                                  }
+                                }
+                              },
+                              "else": {
+                                "actions": {
+                                  "Mark_agent_failed": {
+                                    "runAfter": {},
+                                    "type": "OpenApiConnection",
+                                    "inputs": {
+                                      "host": {
+                                        "connectionName": "shared_sharepointonline",
+                                        "operationId": "PatchItem",
+                                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                      },
+                                      "parameters": {
+                                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                        "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                        "id": "@items('For_each_work_item')?['ID']",
+                                        "item/Status/Value": "Failed",
+                                        "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                                        "item/HasAgentManifest": true,
+                                        "item/ValidationResult": "@{concat('Agent status ', body('PARSE_agent_report')?['status'], '; reason=', body('PARSE_agent_report')?['reason'])}",
+                                        "item/ErrorMessage": "@{take(coalesce(body('PARSE_agent_report')?['notes'], body('PARSE_agent_report')?['reason']), 4000)}",
+                                        "item/CompletedAt": "@utcNow()"
+                                      },
+                                      "authentication": "@parameters('$authentication')"
+                                    },
+                                    "description": "Agent-declared failures are parked immediately. A failed report can still describe uploaded or archived files, so automatically invoking the agent again would overwrite the only pre-run recovery chain."
+                                  }
+                                }
+                              }
                             }
                           }
                         }
+                      },
+                      "Mark_unparseable": {
+                        "runAfter": {
+                          "TRY_parse_agent_report": [
+                            "Failed",
+                            "TimedOut"
+                          ]
+                        },
+                        "type": "OpenApiConnection",
+                        "inputs": {
+                          "host": {
+                            "connectionName": "shared_sharepointonline",
+                            "operationId": "PatchItem",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                          },
+                          "parameters": {
+                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                            "id": "@items('For_each_work_item')?['ID']",
+                            "item/Status/Value": "Failed",
+                            "item/AgentResultJson": "@string(outputs('EXTRACT_reply_text'))",
+                            "item/HasAgentManifest": true,
+                            "item/ValidationResult": "Agent reply could not be parsed as the contracted JSON report.",
+                            "item/ErrorMessage": "@{take(string(outputs('CAPTURE_agent_response')), 4000)}",
+                            "item/CompletedAt": "@utcNow()"
+                          },
+                          "authentication": "@parameters('$authentication')"
+                        },
+                        "description": "An unreadable envelope is retained verbatim and parked. Retrying could repeat side effects whose archive manifest could not be read."
                       }
                     }
                   },
@@ -726,14 +780,14 @@
                             "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                             "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                             "id": "@items('For_each_work_item')?['ID']",
-                            "item/Status/Value": "@{if(variables('BackpressureHit'), 'Pending', if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending'))}",
-                            "item/AttemptCount": "@{if(variables('BackpressureHit'), int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1))}",
+                            "item/Status/Value": "Failed",
+                            "item/AttemptCount": "@add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1)",
                             "item/ErrorMessage": "@{take(string(result('Process_document')), 4000)}",
                             "item/CompletedAt": "@utcNow()"
                           },
                           "authentication": "@parameters('$authentication')"
                         },
-                        "description": "A backpressure failure returns the item to Pending without consuming its retry budget - it was not the document's fault."
+                        "description": "Every ambiguous invocation failure is parked because the agent may have produced side effects without returning a readable archive manifest. Backpressure still stops remaining items in this batch, but never causes an automatic repeat of the current metered call."
                       }
                     }
                   }

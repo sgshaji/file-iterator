@@ -30,7 +30,17 @@ WORKFLOWS = [
     (
         "A-PlanRegenerationRun.json",
         "a1000000-0000-4000-8000-000000000001",
-        "A - Plan Regeneration Run",
+        "A1 - Start Regeneration Plan",
+    ),
+    (
+        "A2-ContinueRegenerationPlan.json",
+        "a2000000-0000-4000-8000-000000000008",
+        "A2 - Continue Regeneration Plan",
+    ),
+    (
+        "A3-ApproveRegenerationPlan.json",
+        "a3000000-0000-4000-8000-000000000009",
+        "A3 - Approve Regeneration Plan",
     ),
     (
         "B-ProcessRegenerationBatch.json",
@@ -45,7 +55,12 @@ WORKFLOWS = [
     (
         "D-RollbackRegenerationRun.json",
         "d4000000-0000-4000-8000-000000000004",
-        "D - Rollback Regeneration Run",
+        "D1 - Start Rollback",
+    ),
+    (
+        "D2-ContinueRollback.json",
+        "d4200000-0000-4000-8000-000000000011",
+        "D2 - Continue Rollback",
     ),
     (
         "E1-StartIndexBackfill.json",
@@ -61,6 +76,16 @@ WORKFLOWS = [
         "F-IndexDelta.json",
         "f6000000-0000-4000-8000-000000000007",
         "F - Index Delta",
+    ),
+    (
+        "F2-IndexDelete.json",
+        "f6200000-0000-4000-8000-000000000010",
+        "F2 - Index Delete",
+    ),
+    (
+        "F3-IndexFolderChange.json",
+        "f6300000-0000-4000-8000-000000000012",
+        "F3 - Index Folder Change",
     ),
 ]
 

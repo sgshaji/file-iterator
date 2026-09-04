@@ -11,6 +11,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FLOW_PATH = os.path.join(
     ROOT, "solution", "src", "Workflows", "D-RollbackRegenerationRun.json"
 )
+WORKER_PATH = os.path.join(
+    ROOT, "solution", "src", "Workflows", "D2-ContinueRollback.json"
+)
 
 ROLLBACK_ACTIONS = json.loads(
     r"""
@@ -59,7 +62,7 @@ ROLLBACK_ACTIONS = json.loads(
       "parameters": {
         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
         "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and Status eq 'Succeeded'",
+        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Succeeded' or Status eq 'Failed') and HasAgentManifest eq 1",
         "$top": 5000
       },
       "authentication": "@parameters('$authentication')"
@@ -95,7 +98,9 @@ ROLLBACK_ACTIONS = json.loads(
               "status": {
                 "type": "string",
                 "enum": [
-                  "OK"
+                  "OK",
+                  "FAILED",
+                  "SKIPPED"
                 ]
               },
               "outputs": {
@@ -313,7 +318,7 @@ ROLLBACK_ACTIONS = json.loads(
       "parameters": {
         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
         "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and Status eq 'Succeeded'",
+        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Succeeded' or Status eq 'Failed') and HasAgentManifest eq 1",
         "$top": 1
       },
       "authentication": "@parameters('$authentication')"
@@ -405,12 +410,505 @@ ROLLBACK_ACTIONS = json.loads(
 """
 )
 
+_lock_run_actions = {
+    "Get_run_to_lock": {
+        "runAfter": {"Require_explicit_confirmation": ["Succeeded"]},
+        "type": "OpenApiConnection",
+        "inputs": {
+            "host": {
+                "connectionName": "shared_sharepointonline",
+                "operationId": "GetItems",
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+            },
+            "parameters": {
+                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                "$filter": (
+                    "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' "
+                    "and (Status eq 'Completed' or Status eq 'CompletedWithErrors')"
+                ),
+                "$top": 1,
+            },
+            "authentication": "@parameters('$authentication')",
+        },
+    },
+    "Validate_terminal_run": {
+        "runAfter": {"Get_newer_live_run": ["Succeeded"]},
+        "type": "If",
+        "expression": {
+            "and": [
+                {"equals": ["@length(body('Get_run_to_lock')?['value'])", 1]},
+                {"equals": ["@length(body('Get_newer_live_run')?['value'])", 0]},
+            ]
+        },
+        "actions": {
+            "Lock_run_for_rollback": {
+                "runAfter": {},
+                "type": "OpenApiConnection",
+                "inputs": {
+                    "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                    },
+                    "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                        "id": "@first(body('Get_run_to_lock')?['value'])?['ID']",
+                        "item/Status/Value": "RollbackInProgress",
+                        "item/RollbackCursorId": 0,
+                    },
+                    "authentication": "@parameters('$authentication')",
+                },
+            }
+        },
+        "else": {
+            "actions": {
+                "Terminate_run_not_terminal": {
+                    "runAfter": {},
+                    "type": "Terminate",
+                    "inputs": {
+                        "runStatus": "Failed",
+                        "runError": {
+                            "code": "RunNotRollbackEligible",
+                            "message": (
+                                "Only Completed or CompletedWithErrors runs can be "
+                                "rolled back, and newer live runs must be rolled "
+                                "back first."
+                            ),
+                        },
+                    },
+                }
+            }
+        },
+    },
+}
 
-def expected_text():
+_ordered = {}
+for _name, _action in ROLLBACK_ACTIONS.items():
+    _ordered[_name] = _action
+    if _name == "Require_explicit_confirmation":
+        _ordered["Get_run_to_lock"] = _lock_run_actions["Get_run_to_lock"]
+        _ordered["Get_newer_live_run"] = {
+            "runAfter": {"Get_run_to_lock": ["Succeeded"]},
+            "type": "OpenApiConnection",
+            "inputs": {
+                "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "GetItems",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                },
+                "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                    "$filter": (
+                        "ID gt @{int(coalesce(first(body('Get_run_to_lock')?['value'])?['ID'], 2147483647))} "
+                        "and IsDryRun eq 0 and Status ne 'Cancelled' and "
+                        "Status ne 'RolledBack'"
+                    ),
+                    "$top": 1,
+                },
+                "authentication": "@parameters('$authentication')",
+            },
+            "description": (
+                "Conservative LIFO guard. A newer live run may own the current "
+                "output, so older runs must be rolled back only after it."
+            ),
+        }
+        _ordered["Validate_terminal_run"] = _lock_run_actions[
+            "Validate_terminal_run"
+        ]
+ROLLBACK_ACTIONS = _ordered
+ROLLBACK_ACTIONS["Get_succeeded_items_for_run"]["runAfter"] = {
+    "Validate_terminal_run": ["Succeeded"]
+}
+ROLLBACK_ACTIONS.pop("Get_run_record")
+_unrecoverable = {
+    "runAfter": {"Get_remaining_succeeded_items": ["Succeeded"]},
+    "type": "OpenApiConnection",
+    "inputs": {
+        "host": {
+            "connectionName": "shared_sharepointonline",
+            "operationId": "GetItems",
+            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+        },
+        "parameters": {
+            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+            "$filter": (
+                "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' "
+                "and Status eq 'Failed' and HasAgentManifest eq 0"
+            ),
+            "$top": 1,
+        },
+        "authentication": "@parameters('$authentication')",
+    },
+    "description": (
+        "A failed item without a parsed archive manifest cannot be declared "
+        "automatically restored."
+    ),
+}
+_with_unrecoverable = {}
+for _name, _action in ROLLBACK_ACTIONS.items():
+    if _name == "Mark_run_rolled_back":
+        _with_unrecoverable["Get_unrecoverable_failed_items"] = _unrecoverable
+    _with_unrecoverable[_name] = _action
+ROLLBACK_ACTIONS = _with_unrecoverable
+_mark_run = ROLLBACK_ACTIONS["Mark_run_rolled_back"]
+_mark_run["runAfter"] = {"Get_unrecoverable_failed_items": ["Succeeded"]}
+_mark_run["expression"] = {
+    "and": [
+        {
+            "equals": [
+                "@length(body('Get_remaining_succeeded_items')?['value'])",
+                0,
+            ]
+        },
+        {
+            "equals": [
+                "@length(body('Get_unrecoverable_failed_items')?['value'])",
+                0,
+            ]
+        }
+    ]
+}
+_patch_run = _mark_run["actions"]["Patch_run"]
+_patch_run["inputs"]["parameters"]["id"] = (
+    "@first(body('Get_run_to_lock')?['value'])?['ID']"
+)
+_incomplete = _mark_run["else"]["actions"]["Terminate_incomplete_rollback"]
+_mark_run["else"]["actions"] = {
+    "Release_incomplete_rollback": {
+        "runAfter": {},
+        "type": "OpenApiConnection",
+        "inputs": {
+            "host": {
+                "connectionName": "shared_sharepointonline",
+                "operationId": "PatchItem",
+                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+            },
+            "parameters": {
+                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                "id": "@first(body('Get_run_to_lock')?['value'])?['ID']",
+                "item/Status/Value": "CompletedWithErrors",
+                "item/SummaryMessage": (
+                    "Rollback incomplete. Review work item RollbackResultJson "
+                    "and ErrorMessage, perform manual recovery, then retry."
+                ),
+            },
+            "authentication": "@parameters('$authentication')",
+        },
+    },
+    "Terminate_incomplete_rollback": _incomplete,
+}
+_incomplete["runAfter"] = {"Release_incomplete_rollback": ["Succeeded"]}
+
+
+def start_text():
     with open(FLOW_PATH, encoding="utf-8") as handle:
         flow = json.load(handle)
-    flow["properties"]["definition"]["actions"] = ROLLBACK_ACTIONS
+    flow["properties"]["definition"]["actions"] = {
+        name: ROLLBACK_ACTIONS[name]
+        for name in (
+            "Require_explicit_confirmation",
+            "Get_run_to_lock",
+            "Get_newer_live_run",
+            "Validate_terminal_run",
+        )
+    }
+    flow["$comment"] = (
+        "FLOW D1 - Start rollback. Validates LIFO eligibility and locks a "
+        "terminal run; D2 restores manifests in bounded pages."
+    )
     return json.dumps(flow, indent=2, ensure_ascii=True) + "\n"
+
+
+def worker_text():
+    restore_loop = json.loads(
+        json.dumps(ROLLBACK_ACTIONS["For_each_item_to_restore"])
+    )
+    restore_loop["runAfter"] = {}
+    restore_loop["foreach"] = "@body('Get_rollback_page')?['value']"
+
+    actions = {
+        "Get_rollback_run": {
+            "runAfter": {},
+            "type": "OpenApiConnection",
+            "inputs": {
+                "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "GetItems",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                },
+                "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                    "$filter": "Status eq 'RollbackInProgress'",
+                    "$orderby": "Created desc",
+                    "$top": 1,
+                },
+                "authentication": "@parameters('$authentication')",
+            },
+        },
+        "Exit_if_no_rollback": {
+            "runAfter": {"Get_rollback_run": ["Succeeded"]},
+            "type": "If",
+            "expression": {
+                "equals": ["@length(body('Get_rollback_run')?['value'])", 0]
+            },
+            "actions": {
+                "Terminate_idle": {
+                    "runAfter": {},
+                    "type": "Terminate",
+                    "inputs": {"runStatus": "Succeeded"},
+                }
+            },
+            "else": {"actions": {}},
+        },
+        "Get_newer_live_run": {
+            "runAfter": {"Exit_if_no_rollback": ["Succeeded"]},
+            "type": "OpenApiConnection",
+            "inputs": {
+                "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "GetItems",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                },
+                "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                    "$filter": (
+                        "ID gt @{first(body('Get_rollback_run')?['value'])?['ID']} "
+                        "and IsDryRun eq 0 and Status ne 'Cancelled' and "
+                        "Status ne 'RolledBack'"
+                    ),
+                    "$top": 1,
+                },
+                "authentication": "@parameters('$authentication')",
+            },
+        },
+        "Abort_if_newer_run_exists": {
+            "runAfter": {"Get_newer_live_run": ["Succeeded"]},
+            "type": "If",
+            "expression": {
+                "greater": ["@length(body('Get_newer_live_run')?['value'])", 0]
+            },
+            "actions": {
+                "Release_rollback_lock": {
+                    "runAfter": {},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                        "host": {
+                            "connectionName": "shared_sharepointonline",
+                            "operationId": "PatchItem",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                        },
+                        "parameters": {
+                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                            "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                            "id": "@first(body('Get_rollback_run')?['value'])?['ID']",
+                            "item/Status/Value": "CompletedWithErrors",
+                            "item/SummaryMessage": (
+                                "Rollback stopped because a newer live run exists. "
+                                "Roll back newer runs first."
+                            ),
+                        },
+                        "authentication": "@parameters('$authentication')",
+                    },
+                },
+                "Terminate_newer_run_exists": {
+                    "runAfter": {"Release_rollback_lock": ["Succeeded"]},
+                    "type": "Terminate",
+                    "inputs": {
+                        "runStatus": "Failed",
+                        "runError": {
+                            "code": "NewerRunExists",
+                            "message": "Rollback stopped; roll back newer live runs first.",
+                        },
+                    },
+                },
+            },
+            "else": {"actions": {}},
+        },
+        "Get_rollback_page": {
+            "runAfter": {"Abort_if_newer_run_exists": ["Succeeded"]},
+            "type": "OpenApiConnection",
+            "inputs": {
+                "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "GetItems",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                },
+                "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                    "$filter": (
+                        "RunId eq '@{first(body('Get_rollback_run')?['value'])?['RunId']}' "
+                        "and ID gt @{int(coalesce(first(body('Get_rollback_run')?['value'])?['RollbackCursorId'], 0))} "
+                        "and (Status eq 'Succeeded' or Status eq 'Failed') "
+                        "and HasAgentManifest eq 1"
+                    ),
+                    "$orderby": "ID asc",
+                    "$top": "@parameters('fi_RollbackPageSize (fi_RollbackPageSize)')",
+                },
+                "authentication": "@parameters('$authentication')",
+            },
+        },
+        "HANDLE_rollback_page": {
+            "runAfter": {"Get_rollback_page": ["Succeeded"]},
+            "type": "If",
+            "expression": {
+                "greater": ["@length(body('Get_rollback_page')?['value'])", 0]
+            },
+            "actions": {
+                "For_each_item_to_restore": restore_loop,
+                "Advance_rollback_cursor": {
+                    "runAfter": {"For_each_item_to_restore": ["Succeeded"]},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                        "host": {
+                            "connectionName": "shared_sharepointonline",
+                            "operationId": "PatchItem",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                        },
+                        "parameters": {
+                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                            "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                            "id": "@first(body('Get_rollback_run')?['value'])?['ID']",
+                            "item/RollbackCursorId": "@last(body('Get_rollback_page')?['value'])?['ID']",
+                        },
+                        "authentication": "@parameters('$authentication')",
+                    },
+                },
+            },
+            "else": {
+                "actions": {
+                    "Get_unrecoverable_failed_items": {
+                        "runAfter": {},
+                        "type": "OpenApiConnection",
+                        "inputs": {
+                            "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "GetItems",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                            },
+                            "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                "$filter": (
+                                    "RunId eq '@{first(body('Get_rollback_run')?['value'])?['RunId']}' "
+                                    "and Status eq 'Failed' and HasAgentManifest eq 0"
+                                ),
+                                "$top": 1,
+                            },
+                            "authentication": "@parameters('$authentication')",
+                        },
+                    },
+                    "Complete_or_release_rollback": {
+                        "runAfter": {
+                            "Get_unrecoverable_failed_items": ["Succeeded"]
+                        },
+                        "type": "If",
+                        "expression": {
+                            "equals": [
+                                "@length(body('Get_unrecoverable_failed_items')?['value'])",
+                                0,
+                            ]
+                        },
+                        "actions": {
+                            "Mark_run_rolled_back": {
+                                "runAfter": {},
+                                "type": "OpenApiConnection",
+                                "inputs": {
+                                    "host": {
+                                        "connectionName": "shared_sharepointonline",
+                                        "operationId": "PatchItem",
+                                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                                    },
+                                    "parameters": {
+                                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                        "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                                        "id": "@first(body('Get_rollback_run')?['value'])?['ID']",
+                                        "item/Status/Value": "RolledBack",
+                                        "item/SummaryMessage": (
+                                            "All generated outputs were removed and "
+                                            "every archived original was restored."
+                                        ),
+                                    },
+                                    "authentication": "@parameters('$authentication')",
+                                },
+                            }
+                        },
+                        "else": {
+                            "actions": {
+                                "Release_incomplete_rollback": {
+                                    "runAfter": {},
+                                    "type": "OpenApiConnection",
+                                    "inputs": {
+                                        "host": {
+                                            "connectionName": "shared_sharepointonline",
+                                            "operationId": "PatchItem",
+                                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                                        },
+                                        "parameters": {
+                                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                            "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                                            "id": "@first(body('Get_rollback_run')?['value'])?['ID']",
+                                            "item/Status/Value": "CompletedWithErrors",
+                                            "item/SummaryMessage": (
+                                                "Rollback incomplete. Review work "
+                                                "item manifests and recover manually."
+                                            ),
+                                        },
+                                        "authentication": "@parameters('$authentication')",
+                                    },
+                                }
+                            }
+                        },
+                    },
+                }
+            },
+        },
+    }
+
+    worker = {
+        "$comment": "FLOW D2 - Continue rollback. Restores a bounded manifest page per run.",
+        "properties": {
+            "connectionReferences": {
+                "shared_sharepointonline": {
+                    "runtimeSource": "embedded",
+                    "connection": {
+                        "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+                    },
+                    "api": {"name": "shared_sharepointonline"},
+                }
+            },
+            "definition": {
+                "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                "contentVersion": "1.0.0.0",
+                "parameters": {
+                    "$connections": {"defaultValue": {}, "type": "Object"},
+                    "$authentication": {"defaultValue": {}, "type": "SecureObject"},
+                },
+                "triggers": {
+                    "Recurrence": {
+                        "type": "Recurrence",
+                        "recurrence": {"frequency": "Minute", "interval": 5},
+                        "runtimeConfiguration": {"concurrency": {"runs": 1}},
+                    }
+                },
+                "actions": actions,
+                "outputs": {},
+            },
+            "schemaVersion": "1.0.0.0",
+        },
+    }
+    return json.dumps(worker, indent=2, ensure_ascii=True) + "\n"
+
+
+def rendered():
+    return {FLOW_PATH: start_text(), WORKER_PATH: worker_text()}
 
 
 def main():
@@ -420,20 +918,24 @@ def main():
     )
     args = parser.parse_args()
 
-    generated = expected_text()
-    if args.check:
-        with open(FLOW_PATH, encoding="utf-8") as handle:
-            current = handle.read()
-        if current != generated:
-            print("ERROR: Flow D is out of date with generate_rollback_flow.py")
-            return 1
-        print("Flow D is up to date with its generator.")
-        return 0
-
-    with open(FLOW_PATH, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(generated)
-    print("Generated %s" % os.path.relpath(FLOW_PATH, ROOT))
-    return 0
+    ok = True
+    for path, generated in rendered().items():
+        if args.check:
+            if not os.path.exists(path):
+                print("ERROR: generated flow is missing: %s" % os.path.relpath(path, ROOT))
+                ok = False
+                continue
+            with open(path, encoding="utf-8") as handle:
+                if handle.read() != generated:
+                    print("ERROR: generated flow is out of date: %s" % os.path.relpath(path, ROOT))
+                    ok = False
+        else:
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(generated)
+            print("Generated %s" % os.path.relpath(path, ROOT))
+    if args.check and ok:
+        print("Rollback flows are up to date.")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

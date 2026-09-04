@@ -515,19 +515,18 @@ def build_walk_actions():
                         "runAfter": {"ENUMERATE_direct_children": ["Succeeded"]},
                         "inputs": {"name": "foldersScanned", "value": 1},
                     },
-                    "SELECT_convertible_files": compose(
-                        (
-                            "@length(filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), "
-                            "equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], "
-                            "toLower(concat('.', last(split(item()?['Name'], '.'))))), true)))"
+                    "SELECT_convertible_files": {
+                        "type": "Query",
+                        "runAfter": {"COUNT_folder": ["Succeeded"]},
+                        "inputs": {
+                            "from": "@coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]'))",
+                            "where": "@contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.')))))",
+                        },
+                        "description": (
+                            "Native Filter array action selecting files supported "
+                            "by the deployed skill."
                         ),
-                        {"COUNT_folder": ["Succeeded"]},
-                        (
-                            "How many convertible files this folder holds directly. "
-                            "Extensions must match pd_tools.py CONVERTIBLE_EXT; a "
-                            "folder with none is a container, not a position."
-                        ),
-                    ),
+                    },
                     "IS_POSITION_FOLDER": {
                         "type": "If",
                         "description": (
@@ -537,29 +536,64 @@ def build_walk_actions():
                         "runAfter": {"SELECT_convertible_files": ["Succeeded"]},
                         "expression": {
                             "and": [
-                                {"greater": ["@outputs('SELECT_convertible_files')", 0]}
+                                {"greater": ["@length(body('SELECT_convertible_files'))", 0]}
                             ]
                         },
                         "actions": {
+                            "SELECT_same_document_group": {
+                                "type": "Query",
+                                "runAfter": {},
+                                "inputs": {
+                                    "from": "@body('SELECT_convertible_files')",
+                                    "where": "@equals(toLower(substring(item()?['Name'], 0, lastIndexOf(item()?['Name'], '.'))), toLower(substring(first(body('SELECT_convertible_files'))?['Name'], 0, lastIndexOf(first(body('SELECT_convertible_files'))?['Name'], '.'))))",
+                                },
+                            },
+                            "SELECT_pdf_candidates": {
+                                "type": "Query",
+                                "runAfter": {
+                                    "SELECT_same_document_group": ["Succeeded"]
+                                },
+                                "inputs": {
+                                    "from": "@body('SELECT_same_document_group')",
+                                    "where": "@equals(toLower(concat('.', last(split(item()?['Name'], '.')))), '.pdf')",
+                                },
+                            },
+                            "SELECT_docx_candidates": {
+                                "type": "Query",
+                                "runAfter": {"SELECT_pdf_candidates": ["Succeeded"]},
+                                "inputs": {
+                                    "from": "@body('SELECT_same_document_group')",
+                                    "where": "@equals(toLower(concat('.', last(split(item()?['Name'], '.')))), '.docx')",
+                                },
+                            },
+                            "CHOOSE_source_file": compose(
+                                (
+                                    "@if(and(greater(length(body('SELECT_pdf_candidates')), 0), "
+                                    "greater(length(body('SELECT_docx_candidates')), 0)), "
+                                    "if(greater(ticks(coalesce(first(body('SELECT_docx_candidates'))?['TimeLastModified'], "
+                                    "'1900-01-01T00:00:00Z')), ticks(coalesce(first(body('SELECT_pdf_candidates'))?['TimeLastModified'], "
+                                    "'1900-01-01T00:00:00Z'))), first(body('SELECT_docx_candidates')), "
+                                    "first(body('SELECT_pdf_candidates'))), "
+                                    "if(greater(length(body('SELECT_pdf_candidates')), 0), "
+                                    "first(body('SELECT_pdf_candidates')), first(body('SELECT_docx_candidates'))))"
+                                ),
+                                {"SELECT_docx_candidates": ["Succeeded"]},
+                                (
+                                    "Match pd_tools.py source preference: PDF unless "
+                                    "the DOCX was modified later."
+                                ),
+                            ),
                             "ADD_candidate": append_var(
                                 "candidates",
                                 {
                                     "positionFolderPath": "@items('FOR_EACH_folder')",
                                     "positionFolderName": "@{last(split(items('FOR_EACH_folder'), '/'))}",
-                                    "sourcePath": (
-                                        "@first(filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), "
-                                        "equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], "
-                                        "toLower(concat('.', last(split(item()?['Name'], '.'))))), true)))?['ServerRelativeUrl']"
-                                    ),
-                                    "convertibleFileCount": "@outputs('SELECT_convertible_files')",
+                                    "sourcePath": "@outputs('CHOOSE_source_file')?['ServerRelativeUrl']",
+                                    "convertibleFileCount": "@length(body('SELECT_same_document_group'))",
                                     "depth": "@variables('depth')",
-                                    "files": (
-                                        "@filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), "
-                                        "equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], "
-                                        "toLower(concat('.', last(split(item()?['Name'], '.'))))), true))"
-                                    ),
+                                    "files": "@body('SELECT_same_document_group')",
                                 },
-                                {},
+                                {"CHOOSE_source_file": ["Succeeded"]},
                                 (
                                     "One candidate per position folder. `files` is carried "
                                     "so the plan is inspectable and so the prompt can name "
@@ -751,6 +785,7 @@ def build_execution_actions():
             "guessed."
         ),
         "runAfter": {"COMPOSE_prompt": ["Succeeded"]},
+        "runtimeConfiguration": {"retryPolicy": {"type": "None"}},
         "inputs": {
             "host": {
                 "apiId": "/providers/Microsoft.PowerApps/apis/" + AGENT,
@@ -919,21 +954,19 @@ def build_execution_actions():
         ),
     )
 
-    handle_parse_failure = {
-        "type": "If",
-        "description": "Did the reply parse as the contracted JSON object?",
-        "runAfter": {"PARSE_agent_report": ["Succeeded", "Failed"]},
-        "expression": {
-            "and": [
-                {"equals": ["@result('PARSE_agent_report')[0]['status']", "Succeeded"]}
-            ]
-        },
+    handle_parsed_reply = {
+        "type": "Scope",
+        "description": "Classify and record a successfully parsed agent report.",
+        "runAfter": {"TRY_parse_agent_report": ["Succeeded"]},
         "actions": {
             "CLASSIFY_outcome": classify,
             "RECORD_result": record_result,
         },
-        "else": {"actions": {"RECORD_unparseable": record_unparseable}},
     }
+    record_unparseable["runAfter"] = {
+        "TRY_parse_agent_report": ["Failed", "TimedOut"]
+    }
+    parse_report["runAfter"] = {}
 
     a["EXECUTE_check_dry_run"] = {
         "type": "If",
@@ -964,8 +997,17 @@ def build_execution_actions():
                     "COUNT_agent_call": count_call,
                     "CAPTURE_agent_response": capture_raw,
                     "EXTRACT_reply_text": extract_text,
-                    "PARSE_agent_report": parse_report,
-                    "HANDLE_reply": handle_parse_failure,
+                    "TRY_parse_agent_report": {
+                        "type": "Scope",
+                        "description": (
+                            "Scope status is the supported signal for whether "
+                            "ParseJson succeeded."
+                        ),
+                        "runAfter": {"EXTRACT_reply_text": ["Succeeded"]},
+                        "actions": {"PARSE_agent_report": parse_report},
+                    },
+                    "HANDLE_reply": handle_parsed_reply,
+                    "RECORD_unparseable": record_unparseable,
                 },
             }
         },
@@ -988,6 +1030,22 @@ def build_summary_actions():
     exactly that. Here the terminal status is derived from the outcomes.
     """
     a = {}
+    filters = {
+        "FILTER_succeeded": "@equals(item()?['outcome'], 'OK')",
+        "FILTER_skipped": "@equals(item()?['outcome'], 'SKIPPED')",
+        "FILTER_failed": "@equals(item()?['outcome'], 'FAILED')",
+        "FILTER_unparseable": "@equals(item()?['outcome'], 'UNPARSEABLE')",
+        "FILTER_failure_reasons": (
+            "@or(equals(item()?['outcome'], 'FAILED'), "
+            "equals(item()?['outcome'], 'UNPARSEABLE'))"
+        ),
+    }
+    for name, condition in filters.items():
+        a[name] = {
+            "type": "Query",
+            "runAfter": {"EXECUTE_check_dry_run": ["Succeeded"]},
+            "inputs": {"from": "@variables('results')", "where": condition},
+        }
 
     a["SUMMARY"] = compose(
         {
@@ -1001,26 +1059,15 @@ def build_summary_actions():
             "positionFoldersFound": "@length(variables('candidates'))",
             "planned": "@length(outputs('PLAN_selected'))",
             "agentCallCount": "@variables('agentCallCount')",
-            "succeeded": (
-                "@length(filter(variables('results'), equals(item()['outcome'], 'OK')))"
-            ),
-            "skipped": (
-                "@length(filter(variables('results'), equals(item()['outcome'], 'SKIPPED')))"
-            ),
-            "failed": (
-                "@length(filter(variables('results'), equals(item()['outcome'], 'FAILED')))"
-            ),
-            "unparseable": (
-                "@length(filter(variables('results'), equals(item()['outcome'], 'UNPARSEABLE')))"
-            ),
-            "failureReasons": (
-                "@filter(variables('results'), "
-                "or(equals(item()['outcome'], 'FAILED'), equals(item()['outcome'], 'UNPARSEABLE')))"
-            ),
+            "succeeded": "@length(body('FILTER_succeeded'))",
+            "skipped": "@length(body('FILTER_skipped'))",
+            "failed": "@length(body('FILTER_failed'))",
+            "unparseable": "@length(body('FILTER_unparseable'))",
+            "failureReasons": "@body('FILTER_failure_reasons')",
             "results": "@variables('results')",
             "plan": "@outputs('PLAN')",
         },
-        {"EXECUTE_check_dry_run": ["Succeeded"]},
+        {name: ["Succeeded"] for name in filters},
         (
             "OBSERVABLE STAGE 5. The run summary. `agentCallCount` is the cost "
             "figure; `skipped` is kept separate from `failed` because "
@@ -1051,7 +1098,7 @@ def build_summary_actions():
             "and": [
                 {
                     "greater": [
-                        "@add(outputs('SUMMARY')['failed'], outputs('SUMMARY')['unparseable'])",
+                        "@add(add(outputs('SUMMARY')['failed'], outputs('SUMMARY')['unparseable']), outputs('SUMMARY')['skipped'])",
                         0,
                     ]
                 }
@@ -1067,9 +1114,10 @@ def build_summary_actions():
                     "runError": {
                         "code": "ConversionFailures",
                         "message": (
-                            "@{concat(string(outputs('SUMMARY')['failed']), ' conversion(s) failed and ', "
+                            "@{concat(string(outputs('SUMMARY')['failed']), ' conversion(s) failed, ', "
+                            "string(outputs('SUMMARY')['skipped']), ' produced no document because source preference changed, and ', "
                             "string(outputs('SUMMARY')['unparseable']), ' reply/replies could not be parsed, out of ', "
-                            "string(outputs('SUMMARY')['agentCallCount']), ' agent call(s). See SUMMARY.failureReasons.')}"
+                            "string(outputs('SUMMARY')['agentCallCount']), ' agent call(s). See SUMMARY.results.')}"
                         ),
                     },
                 },
@@ -1079,7 +1127,7 @@ def build_summary_actions():
             "actions": {
                 "TERMINATE_succeeded": {
                     "type": "Terminate",
-                    "description": "Every attempted conversion succeeded or was legitimately skipped.",
+                    "description": "Every attempted conversion produced a verified document.",
                     "runAfter": {},
                     "inputs": {"runStatus": "Succeeded"},
                 }

@@ -26,14 +26,20 @@
     </Publisher>
     <RootComponents>
       <RootComponent type="29" id="{a1000000-0000-4000-8000-000000000001}" behavior="0" />
+      <RootComponent type="29" id="{a2000000-0000-4000-8000-000000000008}" behavior="0" />
+      <RootComponent type="29" id="{a3000000-0000-4000-8000-000000000009}" behavior="0" />
       <RootComponent type="29" id="{b2000000-0000-4000-8000-000000000002}" behavior="0" />
       <RootComponent type="29" id="{c3000000-0000-4000-8000-000000000003}" behavior="0" />
       <RootComponent type="29" id="{d4000000-0000-4000-8000-000000000004}" behavior="0" />
+      <RootComponent type="29" id="{d4200000-0000-4000-8000-000000000011}" behavior="0" />
       <RootComponent type="29" id="{e5100000-0000-4000-8000-000000000005}" behavior="0" />
       <RootComponent type="29" id="{e5200000-0000-4000-8000-000000000006}" behavior="0" />
       <RootComponent type="29" id="{f6000000-0000-4000-8000-000000000007}" behavior="0" />
+      <RootComponent type="29" id="{f6200000-0000-4000-8000-000000000010}" behavior="0" />
+      <RootComponent type="29" id="{f6300000-0000-4000-8000-000000000012}" behavior="0" />
       <RootComponent type="380" schemaName="fi_SiteAddress" behavior="0" />
       <RootComponent type="380" schemaName="fi_LibraryUrlName" behavior="0" />
+      <RootComponent type="380" schemaName="fi_WebServerRelativeUrl" behavior="0" />
       <RootComponent type="380" schemaName="fi_RootFolderPath" behavior="0" />
       <RootComponent type="380" schemaName="fi_TemplateFolderPath" behavior="0" />
       <RootComponent type="380" schemaName="fi_OutputFolderName" behavior="0" />
@@ -41,20 +47,19 @@
       <RootComponent type="380" schemaName="fi_ExcludedFolderNames" behavior="0" />
       <RootComponent type="380" schemaName="fi_SourceExtensions" behavior="0" />
       <RootComponent type="380" schemaName="fi_BatchSize" behavior="0" />
-      <RootComponent type="380" schemaName="fi_MaxAttempts" behavior="0" />
+      <RootComponent type="380" schemaName="fi_PlanningPageSize" behavior="0" />
       <RootComponent type="380" schemaName="fi_MaxDocumentsPerRun" behavior="0" />
       <RootComponent type="380" schemaName="fi_StaleClaimMinutes" behavior="0" />
       <RootComponent type="380" schemaName="fi_WalkFolderChunkSize" behavior="0" />
+      <RootComponent type="380" schemaName="fi_RollbackPageSize" behavior="0" />
       <RootComponent type="380" schemaName="fi_DryRun" behavior="0" />
-      <RootComponent type="380" schemaName="fi_NotificationRecipient" behavior="0" />
       <RootComponent type="380" schemaName="fi_AgentId" behavior="0" />
       <RootComponent type="380" schemaName="fi_IndexListName" behavior="0" />
       <RootComponent type="380" schemaName="fi_RunListName" behavior="0" />
       <RootComponent type="380" schemaName="fi_WorkItemListName" behavior="0" />
       <RootComponent type="380" schemaName="fi_WalkFrontierListName" behavior="0" />
+      <RootComponent type="380" schemaName="fi_IndexWalkRunListName" behavior="0" />
       <RootComponent type="10099" schemaName="fi_sharedsharepointonline" behavior="0" />
-      <RootComponent type="10099" schemaName="fi_sharedapprovals" behavior="0" />
-      <RootComponent type="10099" schemaName="fi_sharedoffice365" behavior="0" />
       <RootComponent type="10099" schemaName="fi_sharedagentnode" behavior="0" />
     </RootComponents>
     <MissingDependencies>

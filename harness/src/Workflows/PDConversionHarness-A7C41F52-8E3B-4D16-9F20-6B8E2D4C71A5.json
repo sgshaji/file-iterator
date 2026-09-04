@@ -401,14 +401,17 @@
                   }
                 },
                 "SELECT_convertible_files": {
-                  "type": "Compose",
-                  "description": "How many convertible files this folder holds directly. Extensions must match pd_tools.py CONVERTIBLE_EXT; a folder with none is a container, not a position.",
+                  "type": "Query",
                   "runAfter": {
                     "COUNT_folder": [
                       "Succeeded"
                     ]
                   },
-                  "inputs": "@length(filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.'))))), true)))"
+                  "inputs": {
+                    "from": "@coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]'))",
+                    "where": "@contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.')))))"
+                  },
+                  "description": "Native Filter array action selecting files supported by the deployed skill."
                 },
                 "IS_POSITION_FOLDER": {
                   "type": "If",
@@ -422,26 +425,72 @@
                     "and": [
                       {
                         "greater": [
-                          "@outputs('SELECT_convertible_files')",
+                          "@length(body('SELECT_convertible_files'))",
                           0
                         ]
                       }
                     ]
                   },
                   "actions": {
+                    "SELECT_same_document_group": {
+                      "type": "Query",
+                      "runAfter": {},
+                      "inputs": {
+                        "from": "@body('SELECT_convertible_files')",
+                        "where": "@equals(toLower(substring(item()?['Name'], 0, lastIndexOf(item()?['Name'], '.'))), toLower(substring(first(body('SELECT_convertible_files'))?['Name'], 0, lastIndexOf(first(body('SELECT_convertible_files'))?['Name'], '.'))))"
+                      }
+                    },
+                    "SELECT_pdf_candidates": {
+                      "type": "Query",
+                      "runAfter": {
+                        "SELECT_same_document_group": [
+                          "Succeeded"
+                        ]
+                      },
+                      "inputs": {
+                        "from": "@body('SELECT_same_document_group')",
+                        "where": "@equals(toLower(concat('.', last(split(item()?['Name'], '.')))), '.pdf')"
+                      }
+                    },
+                    "SELECT_docx_candidates": {
+                      "type": "Query",
+                      "runAfter": {
+                        "SELECT_pdf_candidates": [
+                          "Succeeded"
+                        ]
+                      },
+                      "inputs": {
+                        "from": "@body('SELECT_same_document_group')",
+                        "where": "@equals(toLower(concat('.', last(split(item()?['Name'], '.')))), '.docx')"
+                      }
+                    },
+                    "CHOOSE_source_file": {
+                      "type": "Compose",
+                      "description": "Match pd_tools.py source preference: PDF unless the DOCX was modified later.",
+                      "runAfter": {
+                        "SELECT_docx_candidates": [
+                          "Succeeded"
+                        ]
+                      },
+                      "inputs": "@if(and(greater(length(body('SELECT_pdf_candidates')), 0), greater(length(body('SELECT_docx_candidates')), 0)), if(greater(ticks(coalesce(first(body('SELECT_docx_candidates'))?['TimeLastModified'], '1900-01-01T00:00:00Z')), ticks(coalesce(first(body('SELECT_pdf_candidates'))?['TimeLastModified'], '1900-01-01T00:00:00Z'))), first(body('SELECT_docx_candidates')), first(body('SELECT_pdf_candidates'))), if(greater(length(body('SELECT_pdf_candidates')), 0), first(body('SELECT_pdf_candidates')), first(body('SELECT_docx_candidates'))))"
+                    },
                     "ADD_candidate": {
                       "type": "AppendToArrayVariable",
                       "description": "One candidate per position folder. `files` is carried so the plan is inspectable and so the prompt can name a source without a second SharePoint call.",
-                      "runAfter": {},
+                      "runAfter": {
+                        "CHOOSE_source_file": [
+                          "Succeeded"
+                        ]
+                      },
                       "inputs": {
                         "name": "candidates",
                         "value": {
                           "positionFolderPath": "@items('FOR_EACH_folder')",
                           "positionFolderName": "@{last(split(items('FOR_EACH_folder'), '/'))}",
-                          "sourcePath": "@first(filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.'))))), true)))?['ServerRelativeUrl']",
-                          "convertibleFileCount": "@outputs('SELECT_convertible_files')",
+                          "sourcePath": "@outputs('CHOOSE_source_file')?['ServerRelativeUrl']",
+                          "convertibleFileCount": "@length(body('SELECT_same_document_group'))",
                           "depth": "@variables('depth')",
-                          "files": "@filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.'))))), true))"
+                          "files": "@body('SELECT_same_document_group')"
                         }
                       }
                     }
@@ -680,6 +729,11 @@
                       "Succeeded"
                     ]
                   },
+                  "runtimeConfiguration": {
+                    "retryPolicy": {
+                      "type": "None"
+                    }
+                  },
                   "inputs": {
                     "host": {
                       "apiId": "/providers/Microsoft.PowerApps/apis/shared_agentnode",
@@ -728,68 +782,75 @@
                   },
                   "inputs": "@if(empty(coalesce(body('INVOKE_agent')?['text'], body('INVOKE_agent')?['response'], body('INVOKE_agent')?['output'])), string(outputs('CAPTURE_agent_response')), string(coalesce(body('INVOKE_agent')?['text'], body('INVOKE_agent')?['response'], body('INVOKE_agent')?['output'])))"
                 },
-                "PARSE_agent_report": {
-                  "type": "ParseJson",
-                  "description": "Parse the skill's run report. Schema mirrors cmd_report's return value in pd_tools.py; `status` and `reason` are the fields the harness branches on.",
+                "TRY_parse_agent_report": {
+                  "type": "Scope",
+                  "description": "Scope status is the supported signal for whether ParseJson succeeded.",
                   "runAfter": {
                     "EXTRACT_reply_text": [
                       "Succeeded"
                     ]
                   },
-                  "inputs": {
-                    "content": "@outputs('EXTRACT_reply_text')",
-                    "schema": {
-                      "type": "object",
-                      "properties": {
-                        "status": {
-                          "type": "string"
-                        },
-                        "reason": {
-                          "type": "string"
-                        },
-                        "sourceFile": {
-                          "type": "string"
-                        },
-                        "sourceChosenBecause": {
-                          "type": "string"
-                        },
-                        "notes": {
-                          "type": "string"
-                        },
-                        "outputs": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "template": {
-                                "type": "string"
-                              },
-                              "kind": {
-                                "type": "string"
-                              },
-                              "destinationFolderPath": {
-                                "type": "string"
-                              },
-                              "outputFileName": {
-                                "type": "string"
-                              },
-                              "bytesSent": {},
-                              "bytesStored": {},
-                              "verdict": {
-                                "type": "string"
-                              },
-                              "verdictNote": {
-                                "type": "string"
-                              },
-                              "missingFields": {
-                                "type": "array"
-                              },
-                              "removed": {
-                                "type": "array"
-                              },
-                              "highlightCleared": {},
-                              "archivedAs": {
-                                "type": "array"
+                  "actions": {
+                    "PARSE_agent_report": {
+                      "type": "ParseJson",
+                      "description": "Parse the skill's run report. Schema mirrors cmd_report's return value in pd_tools.py; `status` and `reason` are the fields the harness branches on.",
+                      "runAfter": {},
+                      "inputs": {
+                        "content": "@outputs('EXTRACT_reply_text')",
+                        "schema": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "sourceFile": {
+                              "type": "string"
+                            },
+                            "sourceChosenBecause": {
+                              "type": "string"
+                            },
+                            "notes": {
+                              "type": "string"
+                            },
+                            "outputs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "template": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "destinationFolderPath": {
+                                    "type": "string"
+                                  },
+                                  "outputFileName": {
+                                    "type": "string"
+                                  },
+                                  "bytesSent": {},
+                                  "bytesStored": {},
+                                  "verdict": {
+                                    "type": "string"
+                                  },
+                                  "verdictNote": {
+                                    "type": "string"
+                                  },
+                                  "missingFields": {
+                                    "type": "array"
+                                  },
+                                  "removed": {
+                                    "type": "array"
+                                  },
+                                  "highlightCleared": {},
+                                  "archivedAs": {
+                                    "type": "array"
+                                  }
+                                }
                               }
                             }
                           }
@@ -799,22 +860,11 @@
                   }
                 },
                 "HANDLE_reply": {
-                  "type": "If",
-                  "description": "Did the reply parse as the contracted JSON object?",
+                  "type": "Scope",
+                  "description": "Classify and record a successfully parsed agent report.",
                   "runAfter": {
-                    "PARSE_agent_report": [
-                      "Succeeded",
-                      "Failed"
-                    ]
-                  },
-                  "expression": {
-                    "and": [
-                      {
-                        "equals": [
-                          "@result('PARSE_agent_report')[0]['status']",
-                          "Succeeded"
-                        ]
-                      }
+                    "TRY_parse_agent_report": [
+                      "Succeeded"
                     ]
                   },
                   "actions": {
@@ -849,28 +899,29 @@
                         }
                       }
                     }
+                  }
+                },
+                "RECORD_unparseable": {
+                  "type": "AppendToArrayVariable",
+                  "description": "A reply that does not parse is recorded as its own outcome with the raw text attached, rather than failing the run with no evidence. `reason` is deliberately outside the skill's closed set: it is the harness's own failure, not the skill's.",
+                  "runAfter": {
+                    "TRY_parse_agent_report": [
+                      "Failed",
+                      "TimedOut"
+                    ]
                   },
-                  "else": {
-                    "actions": {
-                      "RECORD_unparseable": {
-                        "type": "AppendToArrayVariable",
-                        "description": "A reply that does not parse is recorded as its own outcome with the raw text attached, rather than failing the run with no evidence. `reason` is deliberately outside the skill's closed set: it is the harness's own failure, not the skill's.",
-                        "runAfter": {},
-                        "inputs": {
-                          "name": "results",
-                          "value": {
-                            "positionFolderPath": "@items('FOR_EACH_candidate')['positionFolderPath']",
-                            "positionFolderName": "@items('FOR_EACH_candidate')['positionFolderName']",
-                            "outcome": "UNPARSEABLE",
-                            "status": "",
-                            "reason": "harness-could-not-parse-reply",
-                            "notes": "@{concat('The agent reply was not the single JSON object the skill contract specifies. Raw reply: ', substring(string(outputs('CAPTURE_agent_response')), 0, min(2000, length(string(outputs('CAPTURE_agent_response'))))))}",
-                            "outputs": "@json('[]')",
-                            "promptSent": "@outputs('COMPOSE_prompt')",
-                            "completedAt": "@{utcNow()}"
-                          }
-                        }
-                      }
+                  "inputs": {
+                    "name": "results",
+                    "value": {
+                      "positionFolderPath": "@items('FOR_EACH_candidate')['positionFolderPath']",
+                      "positionFolderName": "@items('FOR_EACH_candidate')['positionFolderName']",
+                      "outcome": "UNPARSEABLE",
+                      "status": "",
+                      "reason": "harness-could-not-parse-reply",
+                      "notes": "@{concat('The agent reply was not the single JSON object the skill contract specifies. Raw reply: ', substring(string(outputs('CAPTURE_agent_response')), 0, min(2000, length(string(outputs('CAPTURE_agent_response'))))))}",
+                      "outputs": "@json('[]')",
+                      "promptSent": "@outputs('COMPOSE_prompt')",
+                      "completedAt": "@{utcNow()}"
                     }
                   }
                 }
@@ -881,11 +932,83 @@
             "actions": {}
           }
         },
+        "FILTER_succeeded": {
+          "type": "Query",
+          "runAfter": {
+            "EXECUTE_check_dry_run": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "from": "@variables('results')",
+            "where": "@equals(item()?['outcome'], 'OK')"
+          }
+        },
+        "FILTER_skipped": {
+          "type": "Query",
+          "runAfter": {
+            "EXECUTE_check_dry_run": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "from": "@variables('results')",
+            "where": "@equals(item()?['outcome'], 'SKIPPED')"
+          }
+        },
+        "FILTER_failed": {
+          "type": "Query",
+          "runAfter": {
+            "EXECUTE_check_dry_run": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "from": "@variables('results')",
+            "where": "@equals(item()?['outcome'], 'FAILED')"
+          }
+        },
+        "FILTER_unparseable": {
+          "type": "Query",
+          "runAfter": {
+            "EXECUTE_check_dry_run": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "from": "@variables('results')",
+            "where": "@equals(item()?['outcome'], 'UNPARSEABLE')"
+          }
+        },
+        "FILTER_failure_reasons": {
+          "type": "Query",
+          "runAfter": {
+            "EXECUTE_check_dry_run": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "from": "@variables('results')",
+            "where": "@or(equals(item()?['outcome'], 'FAILED'), equals(item()?['outcome'], 'UNPARSEABLE'))"
+          }
+        },
         "SUMMARY": {
           "type": "Compose",
           "description": "OBSERVABLE STAGE 5. The run summary. `agentCallCount` is the cost figure; `skipped` is kept separate from `failed` because another-format-preferred is a normal outcome and counting it as a failure would misreport a healthy run.",
           "runAfter": {
-            "EXECUTE_check_dry_run": [
+            "FILTER_succeeded": [
+              "Succeeded"
+            ],
+            "FILTER_skipped": [
+              "Succeeded"
+            ],
+            "FILTER_failed": [
+              "Succeeded"
+            ],
+            "FILTER_unparseable": [
+              "Succeeded"
+            ],
+            "FILTER_failure_reasons": [
               "Succeeded"
             ]
           },
@@ -900,11 +1023,11 @@
             "positionFoldersFound": "@length(variables('candidates'))",
             "planned": "@length(outputs('PLAN_selected'))",
             "agentCallCount": "@variables('agentCallCount')",
-            "succeeded": "@length(filter(variables('results'), equals(item()['outcome'], 'OK')))",
-            "skipped": "@length(filter(variables('results'), equals(item()['outcome'], 'SKIPPED')))",
-            "failed": "@length(filter(variables('results'), equals(item()['outcome'], 'FAILED')))",
-            "unparseable": "@length(filter(variables('results'), equals(item()['outcome'], 'UNPARSEABLE')))",
-            "failureReasons": "@filter(variables('results'), or(equals(item()['outcome'], 'FAILED'), equals(item()['outcome'], 'UNPARSEABLE')))",
+            "succeeded": "@length(body('FILTER_succeeded'))",
+            "skipped": "@length(body('FILTER_skipped'))",
+            "failed": "@length(body('FILTER_failed'))",
+            "unparseable": "@length(body('FILTER_unparseable'))",
+            "failureReasons": "@body('FILTER_failure_reasons')",
             "results": "@variables('results')",
             "plan": "@outputs('PLAN')"
           }
@@ -934,7 +1057,7 @@
             "and": [
               {
                 "greater": [
-                  "@add(outputs('SUMMARY')['failed'], outputs('SUMMARY')['unparseable'])",
+                  "@add(add(outputs('SUMMARY')['failed'], outputs('SUMMARY')['unparseable']), outputs('SUMMARY')['skipped'])",
                   0
                 ]
               }
@@ -949,7 +1072,7 @@
                 "runStatus": "Failed",
                 "runError": {
                   "code": "ConversionFailures",
-                  "message": "@{concat(string(outputs('SUMMARY')['failed']), ' conversion(s) failed and ', string(outputs('SUMMARY')['unparseable']), ' reply/replies could not be parsed, out of ', string(outputs('SUMMARY')['agentCallCount']), ' agent call(s). See SUMMARY.failureReasons.')}"
+                  "message": "@{concat(string(outputs('SUMMARY')['failed']), ' conversion(s) failed, ', string(outputs('SUMMARY')['skipped']), ' produced no document because source preference changed, and ', string(outputs('SUMMARY')['unparseable']), ' reply/replies could not be parsed, out of ', string(outputs('SUMMARY')['agentCallCount']), ' agent call(s). See SUMMARY.results.')}"
                 }
               }
             }
@@ -958,7 +1081,7 @@
             "actions": {
               "TERMINATE_succeeded": {
                 "type": "Terminate",
-                "description": "Every attempted conversion succeeded or was legitimately skipped.",
+                "description": "Every attempted conversion produced a verified document.",
                 "runAfter": {},
                 "inputs": {
                   "runStatus": "Succeeded"

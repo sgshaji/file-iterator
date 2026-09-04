@@ -5,6 +5,10 @@ convert, invokes the agent once per position, and reports *what actually happene
 
 The agent already works. This is the machinery around it.
 
+> **Diagnostic fixture, not the production orchestrator.**
+> The complete implementation is [`solution/`](../solution/). Use this harness
+> only for focused enumeration and first-agent-call diagnostics.
+
 ---
 
 ## Verification status — read this first
@@ -87,17 +91,15 @@ and always succeed — proven in the investigation on a folder with 587 immediat
 subfolders, two minutes after CAML threw `SPQueryThrottledException` on the same
 folder. Recursion is the flow's job.
 
-**One unit of work = one position folder, not one file.** The skill groups
-`Role.pdf` and `Role.docx` by stem and converts one, reporting the other as
-`SKIPPED / another-format-preferred`. Iterating files would invoke the agent
-twice per position and pay for a guaranteed skip. This corrected an error in my
-own earlier plan.
+**One diagnostic unit = the preferred source in one position folder.** The
+harness filters the first logical document group and applies the skill's exact
+rule: prefer PDF unless DOCX is newer. It passes one concrete file path to the
+agent, never the folder path.
 
-**The agent's reply is read.** `SKIPPED` is kept distinct from `FAILED` because
-`another-format-preferred` is a *normal* outcome; counting it as failure would
-misreport a healthy run. `UNPARSEABLE` is its own outcome because "the conversion
-failed" and "the harness could not read the reply" have different causes and
-different fixes.
+**The agent's reply is read.** `SKIPPED` remains visible as a distinct diagnostic
+outcome, but it makes the harness run fail because no document was produced.
+`UNPARSEABLE` is separate because "the conversion failed" and "the harness could
+not read the reply" have different causes and fixes.
 
 **Dry run defaults to true.** An unconfigured import cannot spend anything.
 
@@ -224,11 +226,8 @@ Replace it only by re-exporting from the environment. CI enforces this.
 
 ## Relationship to `solution/`
 
-`solution/` is an earlier seven-flow design, built **before** the reference export
-was available. Its architecture is sound at scale but its agent invocation used a
-guessed child-flow placeholder — the export later showed the real mechanism is
-`shared_agentnode` / `InvokeAgent`.
-
-It is retained as the scale-out design and marked superseded rather than deleted.
-The harness is the thing to run now; that design is where to look when the harness
-outgrows a single sequential pass.
+`solution/` is the authoritative production implementation. It incorporates the
+reference export's proven `shared_agentnode` / `InvokeAgent` contract and adds
+paged planning, durable work, approval, finalization, delta maintenance and
+rollback. The harness remains intentionally smaller so a first call is easy to
+inspect.

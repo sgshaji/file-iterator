@@ -1,0 +1,189 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "When_a_run_approval_changes": {
+          "type": "OpenApiConnection",
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 5
+          },
+          "splitOn": "@triggerOutputs()?['body/value']",
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          },
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetOnUpdatedItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "A human approves or rejects by setting ApprovalDecision on the SharePoint run item. No Approvals or Outlook connector is required."
+        }
+      },
+      "actions": {
+        "Get_newer_index_walk": {
+          "runAfter": {},
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+              "$filter": "ID gt @{int(coalesce(triggerOutputs()?['body/IndexSnapshotItemId'], 2147483647))}",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Apply_approval_decision": {
+          "runAfter": {
+            "Get_newer_index_walk": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@triggerOutputs()?['body/Status']?['Value']",
+                  "AwaitingApproval"
+                ]
+              },
+              {
+                "or": [
+                  {
+                    "equals": [
+                      "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
+                      "Approved"
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@length(body('Get_newer_index_walk')?['value'])",
+                      0
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@triggerOutputs()?['body/ApprovalDecision']?['Value']",
+                      "Rejected"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Patch_approval_outcome": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "PatchItem",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                  "id": "@triggerOutputs()?['body/ID']",
+                  "item/Status/Value": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), 'Approved', 'Cancelled')}",
+                  "item/ApprovedBy": "@{if(equals(triggerOutputs()?['body/ApprovalDecision']?['Value'], 'Approved'), triggerOutputs()?['body/Editor/Email'], '')}"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Cancel_if_snapshot_changed": {
+                "runAfter": {},
+                "type": "If",
+                "expression": {
+                  "and": [
+                    {
+                      "equals": [
+                        "@triggerOutputs()?['body/Status']?['Value']",
+                        "AwaitingApproval"
+                      ]
+                    },
+                    {
+                      "greater": [
+                        "@length(body('Get_newer_index_walk')?['value'])",
+                        0
+                      ]
+                    }
+                  ]
+                },
+                "actions": {
+                  "Cancel_stale_plan": {
+                    "runAfter": {},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                        "id": "@triggerOutputs()?['body/ID']",
+                        "item/Status/Value": "Cancelled",
+                        "item/SummaryMessage": "Approval cancelled because a newer index walk exists. Publish again after it completes."
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {}
+                }
+              }
+            }
+          }
+        }
+      },
+      "outputs": {},
+      "description": "A3 applies an audited SharePoint-list approval decision to a complete plan."
+    },
+    "schemaVersion": "1.0.0.0"
+  }
+}

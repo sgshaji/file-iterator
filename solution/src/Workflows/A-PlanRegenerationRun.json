@@ -1,30 +1,42 @@
 {
-  "$comment": "FLOW A - Plan Regeneration Run. Triggered by a template being published. Resolves affected documents from the index, applies the three cost filters, writes work items, and requests approval. INVOKES THE AGENT ZERO TIMES and writes to no business document. All the cost control in this solution lives here. See docs/Template-Regeneration-Solution-Design.md section 5.",
   "properties": {
     "connectionReferences": {
       "shared_sharepointonline": {
         "runtimeSource": "embedded",
-        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
-        "api": { "name": "shared_sharepointonline" }
-      },
-      "shared_approvals": {
-        "runtimeSource": "embedded",
-        "connection": { "connectionReferenceLogicalName": "fi_sharedapprovals" },
-        "api": { "name": "shared_approvals" }
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
       }
     },
     "definition": {
       "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
       "contentVersion": "1.0.0.0",
       "parameters": {
-        "$connections": { "defaultValue": {}, "type": "Object" },
-        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
       },
       "triggers": {
         "When_a_template_is_created_or_modified": {
           "type": "OpenApiConnection",
-          "recurrence": { "frequency": "Minute", "interval": 5 },
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 5
+          },
           "splitOn": "@triggerOutputs()?['body/value']",
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          },
           "inputs": {
             "host": {
               "connectionName": "shared_sharepointonline",
@@ -38,53 +50,84 @@
             },
             "authentication": "@parameters('$authentication')"
           },
-          "description": "Scoped to the template folder ONLY. The template folder and the output folder must be strictly disjoint, otherwise Flow B's writes re-trigger this flow and the solution regenerates itself in a loop."
+          "description": "Scoped to the template folder. Trigger concurrency is one so duplicate deliveries cannot race the active-run check."
         }
       },
       "actions": {
-        "GATE_1_Is_this_an_explicit_publish": {
+        "GATE_explicit_publish": {
           "runAfter": {},
           "type": "If",
           "expression": {
-            "equals": [ "@toLower(coalesce(triggerOutputs()?['body/Status']?['Value'], ''))", "published" ]
+            "equals": [
+              "@toLower(coalesce(triggerOutputs()?['body/Status']?['Value'], ''))",
+              "published"
+            ]
           },
-          "description": "DEBOUNCE. The modify trigger fires several times for a single human edit - autosave, metadata stamping, check-in. Acting on any modification would regenerate hundreds of documents on a spurious trigger. This flow requires a deliberate publish signal and terminates on anything else.",
           "actions": {
             "Init_TemplateName": {
               "runAfter": {},
               "type": "InitializeVariable",
               "inputs": {
                 "variables": [
-                  { "name": "TemplateName", "type": "string", "value": "@{triggerOutputs()?['body/{FilenameWithExtension}']}" }
+                  {
+                    "name": "TemplateName",
+                    "type": "string",
+                    "value": "@{triggerOutputs()?['body/{FilenameWithExtension}']}"
+                  }
                 ]
               }
             },
             "Init_RunId": {
-              "runAfter": { "Init_TemplateName": ["Succeeded"] },
+              "runAfter": {
+                "Init_TemplateName": [
+                  "Succeeded"
+                ]
+              },
               "type": "InitializeVariable",
               "inputs": {
                 "variables": [
-                  { "name": "RunId", "type": "string", "value": "@{guid()}" }
+                  {
+                    "name": "RunId",
+                    "type": "string",
+                    "value": "@{guid()}"
+                  }
                 ]
               }
             },
-            "Init_PlannedCount": {
-              "runAfter": { "Init_RunId": ["Succeeded"] },
-              "type": "InitializeVariable",
-              "inputs": {
-                "variables": [
-                  { "name": "PlannedCount", "type": "integer", "value": 0 }
+            "Compose_template_url": {
+              "runAfter": {
+                "Init_RunId": [
+                  "Succeeded"
                 ]
-              }
+              },
+              "type": "Compose",
+              "inputs": "@{concat(parameters('fi_TemplateFolderPath (fi_TemplateFolderPath)'), '/', triggerOutputs()?['body/{FilenameWithExtension}'])}"
             },
             "Compose_template_fingerprint": {
-              "runAfter": { "Init_PlannedCount": ["Succeeded"] },
+              "runAfter": {
+                "Compose_template_url": [
+                  "Succeeded"
+                ]
+              },
               "type": "Compose",
-              "inputs": "@{concat(coalesce(triggerOutputs()?['body/{UniqueId}'], string(triggerOutputs()?['body/ID'])), ':', coalesce(triggerOutputs()?['body/{VersionNumber}'], ''), ':', coalesce(triggerOutputs()?['body/Modified'], ''))}",
-              "description": "Compact, deterministic fingerprint of the published SharePoint file version. Storing the full base64 template would overflow the 255-character indexed metadata field; UniqueId, version and modified time fit and remain stable for duplicate trigger deliveries."
+              "inputs": "@{concat(coalesce(triggerOutputs()?['body/{UniqueId}'], string(triggerOutputs()?['body/ID'])), ':', coalesce(triggerOutputs()?['body/{VersionNumber}'], ''))}",
+              "description": "Identity of an explicitly published template version. It is stable across duplicate trigger deliveries."
             },
-            "Get_existing_run_for_this_template_fingerprint": {
-              "runAfter": { "Compose_template_fingerprint": ["Succeeded"] },
+            "Compose_run_key": {
+              "runAfter": {
+                "Compose_template_fingerprint": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Compose",
+              "inputs": "@{concat(outputs('Compose_template_fingerprint'), ':', if(parameters('fi_DryRun (fi_DryRun)'), 'dry', 'live'))}"
+            },
+            "Get_latest_completed_index_walk": {
+              "runAfter": {
+                "Compose_run_key": [
+                  "Succeeded"
+                ]
+              },
               "type": "OpenApiConnection",
               "inputs": {
                 "host": {
@@ -94,33 +137,44 @@
                 },
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                  "$filter": "TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status ne 'Cancelled' and Status ne 'RolledBack'",
-                  "$orderby": "Created desc",
+                  "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                  "$filter": "Status eq 'Completed'",
+                  "$orderby": "CompletedAt desc",
                   "$top": 1
                 },
                 "authentication": "@parameters('$authentication')"
-              }
+              },
+              "description": "Planning cannot begin until one complete, reconciled index snapshot exists."
             },
-            "GATE_2_COST_FILTER_F2_Has_the_template_materially_changed": {
-              "runAfter": { "Get_existing_run_for_this_template_fingerprint": ["Succeeded"] },
-              "type": "If",
-              "expression": {
-                "and": [
-                  { "greater": [ "@length(body('Get_existing_run_for_this_template_fingerprint')?['value'])", 0 ] }
+            "GATE_index_ready": {
+              "runAfter": {
+                "Get_latest_completed_index_walk": [
+                  "Succeeded"
                 ]
               },
-              "description": "COST FILTER F2 and trigger idempotency. Any non-cancelled run with the same template fingerprint already owns this work, whether it is planned, active or complete. Duplicate trigger deliveries therefore create zero work items and zero agent calls.",
+              "type": "If",
+              "expression": {
+                "equals": [
+                  "@length(body('Get_latest_completed_index_walk')?['value'])",
+                  0
+                ]
+              },
               "actions": {
-                "Terminate_no_material_change": {
+                "Terminate_index_not_ready": {
                   "runAfter": {},
                   "type": "Terminate",
-                  "inputs": { "runStatus": "Succeeded" }
+                  "inputs": {
+                    "runStatus": "Failed",
+                    "runError": {
+                      "code": "IndexNotReady",
+                      "message": "No completed index backfill exists. Run E1 and wait for E2 reconciliation to complete."
+                    }
+                  }
                 }
               },
               "else": {
                 "actions": {
-                  "COST_FILTER_F1_Get_affected_documents": {
+                  "Get_newer_index_walk": {
                     "runAfter": {},
                     "type": "OpenApiConnection",
                     "inputs": {
@@ -131,272 +185,223 @@
                       },
                       "parameters": {
                         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                        "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                        "$filter": "DocumentRole eq 'Source' and IsExcluded eq 0 and startswith(ParentFolderUrl,'@{parameters('fi_RootFolderPath (fi_RootFolderPath)')}')",
-                        "$top": 5000
+                        "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                        "$filter": "ID gt @{first(body('Get_latest_completed_index_walk')?['value'])?['ID']}",
+                        "$top": 1
                       },
                       "authentication": "@parameters('$authentication')"
-                    },
-                    "description": "COST FILTER F1 - a single INDEXED query against DocumentIndex, not a tree walk. Walking the library on every template change would incur the full enumeration cost every time; this is the whole reason the index exists. Only Source-role rows are candidates, so outputs in the output folder and archived versions are never regenerated."
-                  },
-                  "Init_AffectedDocuments": {
-                    "runAfter": { "COST_FILTER_F1_Get_affected_documents": ["Succeeded"] },
-                    "type": "InitializeVariable",
-                    "inputs": {
-                      "variables": [
-                        { "name": "AffectedDocuments", "type": "array", "value": [] }
-                      ]
                     }
                   },
-                  "For_each_candidate": {
-                    "runAfter": { "Init_AffectedDocuments": ["Succeeded"] },
-                    "type": "Foreach",
-                    "foreach": "@body('COST_FILTER_F1_Get_affected_documents')?['value']",
-                    "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                  "GATE_latest_index_is_complete": {
+                    "runAfter": {
+                      "Get_newer_index_walk": [
+                        "Succeeded"
+                      ]
+                    },
+                    "type": "If",
+                    "expression": {
+                      "greater": [
+                        "@length(body('Get_newer_index_walk')?['value'])",
+                        0
+                      ]
+                    },
                     "actions": {
-                      "Find_preferred_competitor": {
+                      "Terminate_newer_index_walk": {
                         "runAfter": {},
-                        "type": "Query",
+                        "type": "Terminate",
                         "inputs": {
-                          "from": "@body('COST_FILTER_F1_Get_affected_documents')?['value']",
-                          "where": "@and(equals(item()?['ParentFolderUrl'], items('For_each_candidate')?['ParentFolderUrl']), equals(toLower(substring(item()?['FileName'], 0, lastIndexOf(item()?['FileName'], '.'))), toLower(substring(items('For_each_candidate')?['FileName'], 0, lastIndexOf(items('For_each_candidate')?['FileName'], '.')))), not(equals(item()?['UniqueId'], items('For_each_candidate')?['UniqueId'])), or(and(equals(items('For_each_candidate')?['Extension'], '.pdf'), equals(item()?['Extension'], '.docx'), greater(ticks(item()?['TimeLastModified']), ticks(items('For_each_candidate')?['TimeLastModified']))), and(equals(items('For_each_candidate')?['Extension'], '.docx'), equals(item()?['Extension'], '.pdf'), greaterOrEquals(ticks(item()?['TimeLastModified']), ticks(items('For_each_candidate')?['TimeLastModified'])))))"
-                        },
-                        "description": "One real document may exist as both PDF and DOCX. Match the deployed skill's preference exactly: PDF wins unless the DOCX is newer. A candidate with a preferred competitor is not queued, preventing a paid call whose only possible result is another-format-preferred."
-                      },
-                      "Compose_target_url": {
-                        "runAfter": { "Find_preferred_competitor": ["Succeeded"] },
-                        "type": "Compose",
-                        "inputs": "@{items('For_each_candidate')?['ParentFolderUrl']}/@{parameters('fi_OutputFolderName (fi_OutputFolderName)')}/@{replace(items('For_each_candidate')?['FileName'], items('For_each_candidate')?['Extension'], '')} - AD.docx",
-                        "description": "Output path derived from the source. The output folder sits alongside the source, matching the existing tree convention."
-                      },
-                      "Look_up_existing_output": {
-                        "runAfter": { "Compose_target_url": ["Succeeded"] },
-                        "type": "OpenApiConnection",
-                        "inputs": {
-                          "host": {
-                            "connectionName": "shared_sharepointonline",
-                            "operationId": "GetItems",
-                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                          },
-                          "parameters": {
-                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                            "$filter": "SourceUniqueId eq '@{items('For_each_candidate')?['UniqueId']}' and TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status eq 'Succeeded'",
-                            "$top": 1
-                          },
-                          "authentication": "@parameters('$authentication')"
-                        }
-                      },
-                      "COST_FILTER_F3_Skip_if_already_current": {
-                        "runAfter": { "Look_up_existing_output": ["Succeeded"] },
-                        "type": "If",
-                        "expression": {
-                          "or": [
-                            { "greater": [ "@length(body('Find_preferred_competitor'))", 0 ] },
-                            {
-                              "and": [
-                                { "greater": [ "@length(body('Look_up_existing_output')?['value'])", 0 ] },
-                                {
-                                  "equals": [
-                                    "@first(body('Look_up_existing_output')?['value'])?['TemplateFingerprint']",
-                                    "@outputs('Compose_template_fingerprint')"
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        },
-                        "description": "COST FILTERS F0/F3. Skip a non-preferred member of a PDF/DOCX pair before spending, and skip a preferred source whose output for this exact source/template pair already records the current fingerprint.",
-                        "actions": {},
-                        "else": {
-                          "actions": {
-                            "Append_to_affected": {
-                              "runAfter": {},
-                              "type": "AppendToArrayVariable",
-                              "inputs": {
-                                "name": "AffectedDocuments",
-                                "value": {
-                                  "SourceUniqueId": "@items('For_each_candidate')?['UniqueId']",
-                                  "SourceUrl": "@items('For_each_candidate')?['ServerRelativeUrl']",
-                                  "SourceSizeBytes": "@int(coalesce(items('For_each_candidate')?['SizeBytes'], 0))",
-                                  "TargetUrl": "@outputs('Compose_target_url')"
-                                }
-                              }
-                            }
+                          "runStatus": "Failed",
+                          "runError": {
+                            "code": "IndexSnapshotNotCurrent",
+                            "message": "A newer index walk is queued, active or failed. Planning waits for a newer Completed snapshot."
                           }
                         }
                       }
-                    }
-                  },
-                  "Set_PlannedCount": {
-                    "runAfter": { "For_each_candidate": ["Succeeded"] },
-                    "type": "SetVariable",
-                    "inputs": {
-                      "name": "PlannedCount",
-                      "value": "@length(variables('AffectedDocuments'))"
-                    }
-                  },
-                  "GATE_3_Exit_if_nothing_to_do": {
-                    "runAfter": { "Set_PlannedCount": ["Succeeded"] },
-                    "type": "If",
-                    "expression": { "equals": [ "@variables('PlannedCount')", 0 ] },
-                    "actions": {
-                      "Terminate_nothing_affected": {
-                        "runAfter": {},
-                        "type": "Terminate",
-                        "inputs": { "runStatus": "Succeeded" }
-                      }
                     },
-                    "else": { "actions": {} }
+                    "else": {
+                      "actions": {}
+                    }
                   },
-                  "Create_run_record": {
-                    "runAfter": { "GATE_3_Exit_if_nothing_to_do": ["Succeeded"] },
+                  "Get_active_rollback": {
+                    "runAfter": {
+                      "GATE_no_unresolved_side_effects": [
+                        "Succeeded"
+                      ]
+                    },
                     "type": "OpenApiConnection",
                     "inputs": {
                       "host": {
                         "connectionName": "shared_sharepointonline",
-                        "operationId": "PostItem",
+                        "operationId": "GetItems",
                         "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
                       },
                       "parameters": {
                         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                         "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                        "item/Title": "@variables('RunId')",
-                        "item/RunId": "@variables('RunId')",
-                        "item/TemplateName": "@variables('TemplateName')",
-                        "item/TemplateFingerprint": "@outputs('Compose_template_fingerprint')",
-                        "item/TemplateUrl": "@triggerOutputs()?['body/{FullPath}']",
-                        "item/TemplateVersion": "@{triggerOutputs()?['body/{VersionNumber}']}",
-                        "item/Status/Value": "AwaitingApproval",
-                        "item/PlannedCount": "@variables('PlannedCount')",
-                        "item/SucceededCount": 0,
-                        "item/FailedCount": 0,
-                        "item/SkippedCount": 0,
-                        "item/AgentCallCount": 0,
-                        "item/IsDryRun": "@parameters('fi_DryRun (fi_DryRun)')",
-                        "item/RequiresSecondConfirmation": "@greater(variables('PlannedCount'), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')))",
-                        "item/RequestedBy": "@{triggerOutputs()?['body/Editor/Email']}"
+                        "$filter": "Status eq 'RollbackInProgress'",
+                        "$top": 1
                       },
                       "authentication": "@parameters('$authentication')"
                     }
                   },
-                  "For_each_affected_document": {
-                    "runAfter": { "Create_run_record": ["Succeeded"] },
-                    "type": "Foreach",
-                    "foreach": "@variables('AffectedDocuments')",
-                    "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
-                    "actions": {
-                      "Create_work_item": {
-                        "runAfter": {},
-                        "type": "OpenApiConnection",
-                        "inputs": {
-                          "host": {
-                            "connectionName": "shared_sharepointonline",
-                            "operationId": "PostItem",
-                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                          },
-                          "parameters": {
-                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                            "item/Title": "@items('For_each_affected_document')?['SourceUniqueId']",
-                            "item/RunId": "@variables('RunId')",
-                            "item/SourceUniqueId": "@items('For_each_affected_document')?['SourceUniqueId']",
-                            "item/SourceUrl": "@items('For_each_affected_document')?['SourceUrl']",
-                            "item/SourceSizeBytes": "@items('For_each_affected_document')?['SourceSizeBytes']",
-                            "item/TemplateName": "@variables('TemplateName')",
-                            "item/TemplateFingerprint": "@outputs('Compose_template_fingerprint')",
-                            "item/TemplateUrl": "@triggerOutputs()?['body/{FullPath}']",
-                            "item/Status/Value": "Pending",
-                            "item/AttemptCount": 0
-                          },
-                          "authentication": "@parameters('$authentication')"
-                        },
-                        "description": "One durable row per document. Because this state is persisted rather than held in a variable, the job is resumable, its run duration is bounded, and it is immune to the 16 MB action output cap."
-                      }
+                  "Get_unresolved_side_effects": {
+                    "runAfter": {
+                      "GATE_latest_index_is_complete": [
+                        "Succeeded"
+                      ]
+                    },
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "GetItems",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                        "$filter": "TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status eq 'Failed' and HasAgentManifest eq 1",
+                        "$top": 1
+                      },
+                      "authentication": "@parameters('$authentication')"
                     }
                   },
-                  "GATE_4_Stop_here_if_dry_run": {
-                    "runAfter": { "For_each_affected_document": ["Succeeded"] },
+                  "GATE_no_unresolved_side_effects": {
+                    "runAfter": {
+                      "Get_unresolved_side_effects": [
+                        "Succeeded"
+                      ]
+                    },
                     "type": "If",
-                    "expression": { "equals": [ "@parameters('fi_DryRun (fi_DryRun)')", true ] },
-                    "description": "DryRun defaults to TRUE so a fresh deployment cannot regenerate documents before anyone has inspected a plan. The work items exist for inspection and are never executed.",
+                    "expression": {
+                      "greater": [
+                        "@length(body('Get_unresolved_side_effects')?['value'])",
+                        0
+                      ]
+                    },
                     "actions": {
-                      "Terminate_dry_run_complete": {
+                      "Terminate_unresolved_side_effects": {
                         "runAfter": {},
                         "type": "Terminate",
-                        "inputs": { "runStatus": "Succeeded" }
+                        "inputs": {
+                          "runStatus": "Failed",
+                          "runError": {
+                            "code": "PriorFailedAttemptNeedsRollback",
+                            "message": "A prior failed attempt for this template version has an agent manifest. Roll it back before planning again."
+                          }
+                        }
+                      }
+                    },
+                    "else": {
+                      "actions": {}
+                    }
+                  },
+                  "GATE_no_active_rollback": {
+                    "runAfter": {
+                      "Get_active_rollback": [
+                        "Succeeded"
+                      ]
+                    },
+                    "type": "If",
+                    "expression": {
+                      "greater": [
+                        "@length(body('Get_active_rollback')?['value'])",
+                        0
+                      ]
+                    },
+                    "actions": {
+                      "Terminate_rollback_in_progress": {
+                        "runAfter": {},
+                        "type": "Terminate",
+                        "inputs": {
+                          "runStatus": "Failed",
+                          "runError": {
+                            "code": "RollbackInProgress",
+                            "message": "No regeneration plan can start while rollback is active."
+                          }
+                        }
                       }
                     },
                     "else": {
                       "actions": {
-                        "GATE_5_Request_approval": {
+                        "Get_active_duplicate": {
                           "runAfter": {},
-                          "type": "OpenApiConnectionWebhook",
+                          "type": "OpenApiConnection",
                           "inputs": {
                             "host": {
-                              "connectionName": "shared_approvals",
-                              "operationId": "StartAndWaitForApproval",
-                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_approvals"
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "GetItems",
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
                             },
                             "parameters": {
-                              "approvalType": "Basic",
-                              "ApprovalCreationInput/title": "@{if(greater(variables('PlannedCount'), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)'))), 'SECOND CONFIRMATION REQUIRED - large regeneration run', 'Approve document regeneration run')}",
-                              "ApprovalCreationInput/assignedTo": "@parameters('fi_NotificationRecipient (fi_NotificationRecipient)')",
-                              "ApprovalCreationInput/details": "Template: @{variables('TemplateName')}\nRun: @{variables('RunId')}\nDocuments to regenerate: @{variables('PlannedCount')}\nPer-run cap: @{parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')}\n\n@{if(greater(variables('PlannedCount'), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)'))), 'THIS RUN EXCEEDS THE PER-RUN CAP. Approving it consumes agent capacity for every document listed and overwrites that many business documents. Confirm the correct template was published before approving.', 'Within the configured cap.')}\n\nSample of affected documents:\n@{join(take(variables('AffectedDocuments'), 10), '\n')}"
+                              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                              "$filter": "RunKey eq '@{replace(outputs('Compose_run_key'),'''','''''')}' and Status ne 'Cancelled' and Status ne 'RolledBack' and Status ne 'CompletedWithErrors'",
+                              "$top": 1
                             },
                             "authentication": "@parameters('$authentication')"
-                          },
-                          "description": "GATE 5 - nothing is written to any business document until a human approves. Above MaxDocumentsPerRun the title and body escalate, which is the circuit breaker against a wrong template becoming a large bill."
+                          }
                         },
-                        "Apply_approval_outcome": {
-                          "runAfter": { "GATE_5_Request_approval": ["Succeeded"] },
+                        "GATE_duplicate_delivery": {
+                          "runAfter": {
+                            "Get_active_duplicate": [
+                              "Succeeded"
+                            ]
+                          },
                           "type": "If",
                           "expression": {
-                            "equals": [ "@outputs('GATE_5_Request_approval')?['body/outcome']", "Approve" ]
+                            "greater": [
+                              "@length(body('Get_active_duplicate')?['value'])",
+                              0
+                            ]
                           },
                           "actions": {
-                            "Mark_run_approved": {
+                            "Terminate_duplicate": {
                               "runAfter": {},
-                              "type": "OpenApiConnection",
+                              "type": "Terminate",
                               "inputs": {
-                                "host": {
-                                  "connectionName": "shared_sharepointonline",
-                                  "operationId": "PatchItem",
-                                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                                },
-                                "parameters": {
-                                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                  "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                                  "id": "@body('Create_run_record')?['ID']",
-                                  "item/Status/Value": "Approved",
-                                  "item/ApprovedBy": "@{outputs('GATE_5_Request_approval')?['body/responses'][0]['responder']['email']}",
-                                  "item/StartedAt": "@utcNow()"
-                                },
-                                "authentication": "@parameters('$authentication')"
-                              },
-                              "description": "Flow B only claims work items belonging to an Approved or Running run. Until this patch happens, the queue is inert."
+                                "runStatus": "Succeeded"
+                              }
                             }
                           },
                           "else": {
                             "actions": {
-                              "Cancel_run": {
+                              "Create_planning_run": {
                                 "runAfter": {},
                                 "type": "OpenApiConnection",
                                 "inputs": {
                                   "host": {
                                     "connectionName": "shared_sharepointonline",
-                                    "operationId": "PatchItem",
+                                    "operationId": "PostItem",
                                     "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
                                   },
                                   "parameters": {
                                     "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                                     "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                                    "id": "@body('Create_run_record')?['ID']",
-                                    "item/Status/Value": "Cancelled",
-                                    "item/CompletedAt": "@utcNow()"
+                                    "item/Title": "@variables('RunId')",
+                                    "item/RunId": "@variables('RunId')",
+                                    "item/RunKey": "@outputs('Compose_run_key')",
+                                    "item/TemplateName": "@variables('TemplateName')",
+                                    "item/TemplateFingerprint": "@outputs('Compose_template_fingerprint')",
+                                    "item/TemplateUrl": "@outputs('Compose_template_url')",
+                                    "item/TemplateVersion": "@{triggerOutputs()?['body/{VersionNumber}']}",
+                                    "item/Status/Value": "Planning",
+                                    "item/PlannedCount": 0,
+                                    "item/SucceededCount": 0,
+                                    "item/FailedCount": 0,
+                                    "item/SkippedCount": 0,
+                                    "item/AgentCallCount": 0,
+                                    "item/IsDryRun": "@parameters('fi_DryRun (fi_DryRun)')",
+                                    "item/RequiresSecondConfirmation": false,
+                                    "item/PlanningCursorId": 0,
+                                    "item/IndexSnapshotRunId": "@first(body('Get_latest_completed_index_walk')?['value'])?['WalkRunId']",
+                                    "item/IndexSnapshotItemId": "@first(body('Get_latest_completed_index_walk')?['value'])?['ID']",
+                                    "item/RequestedBy": "@triggerOutputs()?['body/Editor/Email']",
+                                    "item/StartedAt": "@utcNow()"
                                   },
                                   "authentication": "@parameters('$authentication')"
-                                }
+                                },
+                                "description": "Creates only the durable planning header. A2 pages the index and writes work items, so this trigger never accumulates an unbounded action output."
                               }
                             }
                           }
@@ -408,11 +413,15 @@
               }
             }
           },
-          "else": { "actions": {} }
+          "else": {
+            "actions": {}
+          },
+          "description": "Only an explicit Published value creates a planning run."
         }
       },
-      "outputs": {}
-    }
-  },
-  "schemaVersion": "1.0.0.0"
+      "outputs": {},
+      "description": "A1 creates one durable planning run for an explicitly published template."
+    },
+    "schemaVersion": "1.0.0.0"
+  }
 }

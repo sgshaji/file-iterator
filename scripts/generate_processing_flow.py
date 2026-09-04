@@ -33,6 +33,11 @@ PROCESS_ACTIONS = json.loads(
         "Succeeded"
       ]
     },
+    "runtimeConfiguration": {
+      "retryPolicy": {
+        "type": "None"
+      }
+    },
     "type": "OpenApiConnection",
     "inputs": {
       "host": {
@@ -155,10 +160,16 @@ PROCESS_ACTIONS = json.loads(
                   "type": "string"
                 },
                 "bytesSent": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
                 },
                 "bytesStored": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
                 },
                 "verdict": {
                   "type": "string",
@@ -248,6 +259,7 @@ PROCESS_ACTIONS = json.loads(
                 "id": "@items('For_each_work_item')?['ID']",
                 "item/Status/Value": "Succeeded",
                 "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                "item/HasAgentManifest": true,
                 "item/ValidationResult": "Agent status OK; every reported output has verdict PASS and stored byte counts were verified by pd_tools.py.",
                 "item/ErrorMessage": "",
                 "item/CompletedAt": "@utcNow()"
@@ -291,10 +303,11 @@ PROCESS_ACTIONS = json.loads(
                       "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                       "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                       "id": "@items('For_each_work_item')?['ID']",
-                      "item/Status/Value": "Skipped",
+                      "item/Status/Value": "Failed",
                       "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                      "item/ValidationResult": "Agent reported the normal another-format-preferred outcome.",
-                      "item/ErrorMessage": "",
+                      "item/HasAgentManifest": true,
+                      "item/ValidationResult": "Source preference changed after planning; no conversion was produced.",
+                      "item/ErrorMessage": "Publish the same template version again to re-plan the current preferred source.",
                       "item/CompletedAt": "@utcNow()"
                     },
                     "authentication": "@parameters('$authentication')"
@@ -303,7 +316,7 @@ PROCESS_ACTIONS = json.loads(
               },
               "else": {
                 "actions": {
-                  "Mark_agent_failed_or_retry": {
+                  "Mark_agent_failed": {
                     "runAfter": {},
                     "type": "OpenApiConnection",
                     "inputs": {
@@ -316,15 +329,16 @@ PROCESS_ACTIONS = json.loads(
                         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                         "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                         "id": "@items('For_each_work_item')?['ID']",
-                        "item/Status/Value": "@{if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
+                        "item/Status/Value": "Failed",
                         "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                        "item/HasAgentManifest": true,
                         "item/ValidationResult": "@{concat('Agent status ', body('PARSE_agent_report')?['status'], '; reason=', body('PARSE_agent_report')?['reason'])}",
                         "item/ErrorMessage": "@{take(coalesce(body('PARSE_agent_report')?['notes'], body('PARSE_agent_report')?['reason']), 4000)}",
                         "item/CompletedAt": "@utcNow()"
                       },
                       "authentication": "@parameters('$authentication')"
                     },
-                    "description": "FAILED reports are retried only to MaxAttempts, then parked for review."
+                    "description": "Agent-declared failures are parked immediately. A failed report can still describe uploaded or archived files, so automatically invoking the agent again would overwrite the only pre-run recovery chain."
                   }
                 }
               }
@@ -335,7 +349,7 @@ PROCESS_ACTIONS = json.loads(
     },
     "else": {
       "actions": {
-        "Mark_unparseable_or_retry": {
+        "Mark_unparseable": {
           "runAfter": {},
           "type": "OpenApiConnection",
           "inputs": {
@@ -348,14 +362,16 @@ PROCESS_ACTIONS = json.loads(
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
               "id": "@items('For_each_work_item')?['ID']",
-              "item/Status/Value": "@{if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
+              "item/Status/Value": "Failed",
+              "item/AgentResultJson": "@string(outputs('EXTRACT_reply_text'))",
+              "item/HasAgentManifest": true,
               "item/ValidationResult": "Agent reply could not be parsed as the contracted JSON report.",
               "item/ErrorMessage": "@{take(string(outputs('CAPTURE_agent_response')), 4000)}",
               "item/CompletedAt": "@utcNow()"
             },
             "authentication": "@parameters('$authentication')"
           },
-          "description": "An unreadable envelope is retained verbatim and retried only to MaxAttempts."
+          "description": "An unreadable envelope is retained verbatim and parked. Retrying could repeat side effects whose archive manifest could not be read."
         }
       }
     }
@@ -364,6 +380,70 @@ PROCESS_ACTIONS = json.loads(
 '''
 )
 
+# ParseJson is not a scope, so result('PARSE_agent_report') is invalid WDL.
+# Wrap it in a Scope and route by that scope's runAfter status instead.
+_parse_action = PROCESS_ACTIONS.pop("PARSE_agent_report")
+_parse_action["runAfter"] = {}
+_handle = PROCESS_ACTIONS.pop("HANDLE_parsed_report")
+_parsed_handler = _handle["actions"]["HANDLE_agent_ok"]
+_parsed_handler["runAfter"] = {"FILTER_non_pass_outputs": ["Succeeded"]}
+_parsed_handler["expression"]["and"].append(
+    {"equals": ["@length(body('FILTER_non_pass_outputs'))", 0]}
+)
+_unparseable_handler = _handle["else"]["actions"]["Mark_unparseable"]
+_unparseable_handler["runAfter"] = {"TRY_parse_agent_report": ["Failed", "TimedOut"]}
+PROCESS_ACTIONS["TRY_parse_agent_report"] = {
+    "runAfter": {"EXTRACT_reply_text": ["Succeeded"]},
+    "type": "Scope",
+    "actions": {"PARSE_agent_report": _parse_action},
+    "description": "Scope status is the supported signal for whether ParseJson succeeded.",
+}
+PROCESS_ACTIONS["FILTER_non_pass_outputs"] = {
+    "runAfter": {"TRY_parse_agent_report": ["Succeeded"]},
+    "type": "Query",
+    "inputs": {
+        "from": "@body('PARSE_agent_report')?['outputs']",
+        "where": "@not(equals(item()?['verdict'], 'PASS'))",
+    },
+    "description": (
+        "Defence in depth: top-level OK is accepted only when every output "
+        "independently reports a PASS byte-verification verdict."
+    ),
+}
+PROCESS_ACTIONS["HANDLE_parsed_report"] = _parsed_handler
+PROCESS_ACTIONS["Mark_unparseable"] = _unparseable_handler
+
+_with_durable_count = {}
+for _name, _action in PROCESS_ACTIONS.items():
+    _with_durable_count[_name] = _action
+    if _name == "Count_agent_call":
+        _with_durable_count["Persist_agent_call_count"] = {
+            "runAfter": {"Count_agent_call": ["Succeeded"]},
+            "type": "OpenApiConnection",
+            "inputs": {
+                "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PatchItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                },
+                "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                    "id": "@first(body('Get_active_run')?['value'])?['ID']",
+                    "item/AgentCallCount": "@add(int(coalesce(first(body('Get_active_run')?['value'])?['AgentCallCount'], 0)), variables('AgentCallsThisBatch'))",
+                },
+                "authentication": "@parameters('$authentication')",
+            },
+            "description": (
+                "Persist cost immediately after each metered call so a later "
+                "batch crash cannot erase the count."
+            ),
+        }
+PROCESS_ACTIONS = _with_durable_count
+PROCESS_ACTIONS["CAPTURE_agent_response"]["runAfter"] = {
+    "Persist_agent_call_count": ["Succeeded"]
+}
+
 
 def expected_text():
     with open(FLOW_PATH, encoding="utf-8") as handle:
@@ -371,6 +451,8 @@ def expected_text():
 
     properties = flow["properties"]
     properties["connectionReferences"]["shared_agentnode"] = AGENT_CONNECTION
+    trigger = properties["definition"]["triggers"]["Recurrence"]
+    trigger["runtimeConfiguration"] = {"concurrency": {"runs": 1}}
     process = (
         properties["definition"]["actions"]["For_each_work_item"]["actions"]
         ["Skip_if_backpressure"]["else"]["actions"]["Process_document"]

@@ -1,0 +1,501 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "Recurrence": {
+          "type": "Recurrence",
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 2
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          },
+          "description": "Consumes one bounded DocumentIndex page per run."
+        }
+      },
+      "actions": {
+        "Get_planning_run": {
+          "runAfter": {},
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "$filter": "Status eq 'Planning'",
+              "$orderby": "Created asc",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Exit_if_no_planning_run": {
+          "runAfter": {
+            "Get_newer_index_walk": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "or": [
+              {
+                "equals": [
+                  "@length(body('Get_planning_run')?['value'])",
+                  0
+                ]
+              },
+              {
+                "greater": [
+                  "@length(body('Get_newer_index_walk')?['value'])",
+                  0
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Cancel_if_snapshot_changed": {
+              "runAfter": {},
+              "type": "If",
+              "expression": {
+                "greater": [
+                  "@length(body('Get_newer_index_walk')?['value'])",
+                  0
+                ]
+              },
+              "actions": {
+                "Cancel_stale_plan": {
+                  "runAfter": {},
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                      "id": "@first(body('Get_planning_run')?['value'])?['ID']",
+                      "item/Status/Value": "Cancelled",
+                      "item/SummaryMessage": "Planning cancelled because a newer index walk exists. Publish again after the newest walk completes."
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "else": {
+                "actions": {}
+              }
+            },
+            "Terminate_idle": {
+              "runAfter": {
+                "Cancel_if_snapshot_changed": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Succeeded"
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        },
+        "Init_PagePlannedCount": {
+          "runAfter": {
+            "Exit_if_no_planning_run": [
+              "Succeeded"
+            ]
+          },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "PagePlannedCount",
+                "type": "integer",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "Get_source_page": {
+          "runAfter": {
+            "Init_PagePlannedCount": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+              "$filter": "ID gt @{int(coalesce(first(body('Get_planning_run')?['value'])?['PlanningCursorId'], 0))} and DocumentRole eq 'Source' and IsExcluded eq 0",
+              "$orderby": "ID asc",
+              "$top": "@parameters('fi_PlanningPageSize (fi_PlanningPageSize)')"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "Bounded page; work items are persisted before the next page is read."
+        },
+        "HANDLE_page": {
+          "runAfter": {
+            "Get_source_page": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "greater": [
+              "@length(body('Get_source_page')?['value'])",
+              0
+            ]
+          },
+          "actions": {
+            "For_each_candidate": {
+              "runAfter": {},
+              "type": "Foreach",
+              "foreach": "@body('Get_source_page')?['value']",
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              },
+              "actions": {
+                "Get_document_group": {
+                  "runAfter": {},
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "GetItems",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                      "$filter": "ParentFolderUniqueId eq '@{items('For_each_candidate')?['ParentFolderUniqueId']}' and DocumentStem eq '@{replace(items('For_each_candidate')?['DocumentStem'],'''','''''')}' and DocumentRole eq 'Source' and IsExcluded eq 0",
+                      "$top": 10
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  },
+                  "description": "Indexed folder GUID plus stem identifies all formats of one real document without filtering on a long path."
+                },
+                "Filter_preferred_competitors": {
+                  "runAfter": {
+                    "Get_document_group": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Get_document_group')?['value']",
+                    "where": "@and(not(equals(item()?['UniqueId'], items('For_each_candidate')?['UniqueId'])), or(and(equals(items('For_each_candidate')?['Extension'], '.pdf'), equals(item()?['Extension'], '.docx'), greater(ticks(coalesce(item()?['TimeLastModified'], '1900-01-01T00:00:00Z')), ticks(coalesce(items('For_each_candidate')?['TimeLastModified'], '1900-01-01T00:00:00Z')))), and(equals(items('For_each_candidate')?['Extension'], '.docx'), equals(item()?['Extension'], '.pdf'), greaterOrEquals(ticks(coalesce(item()?['TimeLastModified'], '1900-01-01T00:00:00Z')), ticks(coalesce(items('For_each_candidate')?['TimeLastModified'], '1900-01-01T00:00:00Z'))))))"
+                  },
+                  "description": "Native Filter array action implementing the skill's preference: PDF wins unless DOCX is newer."
+                },
+                "GATE_preferred_source": {
+                  "runAfter": {
+                    "Filter_preferred_competitors": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "If",
+                  "expression": {
+                    "equals": [
+                      "@length(body('Filter_preferred_competitors'))",
+                      0
+                    ]
+                  },
+                  "actions": {
+                    "Get_existing_current_work_item": {
+                      "runAfter": {},
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "GetItems",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                          "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                          "$filter": "RunId eq '@{first(body('Get_planning_run')?['value'])?['RunId']}' and SourceDocumentKey eq '@{replace(items('For_each_candidate')?['DocumentKey'],'''','''''')}'",
+                          "$top": 1
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      }
+                    },
+                    "GATE_current_work_missing": {
+                      "runAfter": {
+                        "Get_existing_current_work_item": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "If",
+                      "expression": {
+                        "equals": [
+                          "@length(body('Get_existing_current_work_item')?['value'])",
+                          0
+                        ]
+                      },
+                      "actions": {
+                        "Get_prior_success": {
+                          "runAfter": {},
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "host": {
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "GetItems",
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                            },
+                            "parameters": {
+                              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                              "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                              "$filter": "SourceDocumentKey eq '@{replace(items('For_each_candidate')?['DocumentKey'],'''','''''')}' and TemplateName eq '@{replace(first(body('Get_planning_run')?['value'])?['TemplateName'],'''','''''')}' and TemplateFingerprint eq '@{first(body('Get_planning_run')?['value'])?['TemplateFingerprint']}' and Status eq 'Succeeded'",
+                              "$top": 1
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        },
+                        "GATE_no_prior_success": {
+                          "runAfter": {
+                            "Get_prior_success": [
+                              "Succeeded"
+                            ]
+                          },
+                          "type": "If",
+                          "expression": {
+                            "equals": [
+                              "@length(body('Get_prior_success')?['value'])",
+                              0
+                            ]
+                          },
+                          "actions": {
+                            "Create_work_item": {
+                              "runAfter": {},
+                              "type": "OpenApiConnection",
+                              "inputs": {
+                                "host": {
+                                  "connectionName": "shared_sharepointonline",
+                                  "operationId": "PostItem",
+                                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                },
+                                "parameters": {
+                                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                  "item/Title": "@items('For_each_candidate')?['UniqueId']",
+                                  "item/RunId": "@first(body('Get_planning_run')?['value'])?['RunId']",
+                                  "item/SourceUniqueId": "@items('For_each_candidate')?['UniqueId']",
+                                  "item/SourceDocumentKey": "@items('For_each_candidate')?['DocumentKey']",
+                                  "item/SourceUrl": "@items('For_each_candidate')?['ServerRelativeUrl']",
+                                  "item/SourceSizeBytes": "@int(coalesce(items('For_each_candidate')?['SizeBytes'], 0))",
+                                  "item/TemplateName": "@first(body('Get_planning_run')?['value'])?['TemplateName']",
+                                  "item/TemplateFingerprint": "@first(body('Get_planning_run')?['value'])?['TemplateFingerprint']",
+                                  "item/TemplateUrl": "@first(body('Get_planning_run')?['value'])?['TemplateUrl']",
+                                  "item/Status/Value": "Pending",
+                                  "item/AttemptCount": 0
+                                },
+                                "authentication": "@parameters('$authentication')"
+                              }
+                            },
+                            "Increment_page_planned": {
+                              "runAfter": {
+                                "Create_work_item": [
+                                  "Succeeded"
+                                ]
+                              },
+                              "type": "IncrementVariable",
+                              "inputs": {
+                                "name": "PagePlannedCount",
+                                "value": 1
+                              }
+                            }
+                          },
+                          "else": {
+                            "actions": {}
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Count_existing_page_work": {
+                            "runAfter": {},
+                            "type": "IncrementVariable",
+                            "inputs": {
+                              "name": "PagePlannedCount",
+                              "value": 1
+                            },
+                            "description": "Crash-safe recovery: work already persisted by a prior attempt of this page still contributes to PlannedCount."
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  }
+                }
+              }
+            },
+            "Advance_planning_cursor": {
+              "runAfter": {
+                "For_each_candidate": [
+                  "Succeeded"
+                ]
+              },
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "PatchItem",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                  "id": "@first(body('Get_planning_run')?['value'])?['ID']",
+                  "item/PlanningCursorId": "@last(body('Get_source_page')?['value'])?['ID']",
+                  "item/PlannedCount": "@add(int(coalesce(first(body('Get_planning_run')?['value'])?['PlannedCount'], 0)), variables('PagePlannedCount'))"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "FINALISE_planning": {
+                "runAfter": {},
+                "type": "If",
+                "expression": {
+                  "or": [
+                    {
+                      "equals": [
+                        "@first(body('Get_planning_run')?['value'])?['IsDryRun']",
+                        true
+                      ]
+                    },
+                    {
+                      "equals": [
+                        "@int(coalesce(first(body('Get_planning_run')?['value'])?['PlannedCount'], 0))",
+                        0
+                      ]
+                    }
+                  ]
+                },
+                "actions": {
+                  "Complete_plan_without_execution": {
+                    "runAfter": {},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                        "id": "@first(body('Get_planning_run')?['value'])?['ID']",
+                        "item/Status/Value": "Completed",
+                        "item/CompletedAt": "@utcNow()",
+                        "item/SummaryMessage": "@{if(first(body('Get_planning_run')?['value'])?['IsDryRun'], 'Dry-run plan completed; no agent calls were made.', 'No outstanding documents matched this template version.')}"
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "Queue_for_approval": {
+                      "runAfter": {},
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "PatchItem",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                          "table": "@parameters('fi_RunListName (fi_RunListName)')",
+                          "id": "@first(body('Get_planning_run')?['value'])?['ID']",
+                          "item/Status/Value": "AwaitingApproval",
+                          "item/ApprovalDecision/Value": "Pending",
+                          "item/RequiresSecondConfirmation": "@greater(int(first(body('Get_planning_run')?['value'])?['PlannedCount']), int(parameters('fi_MaxDocumentsPerRun (fi_MaxDocumentsPerRun)')))"
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      },
+                      "description": "Approval is handled by A3 so a human wait does not block the single-concurrency pager."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "Get_newer_index_walk": {
+          "runAfter": {
+            "Get_planning_run": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+              "$filter": "ID gt @{int(coalesce(first(body('Get_planning_run')?['value'])?['IndexSnapshotItemId'], 2147483647))}",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        }
+      },
+      "outputs": {},
+      "description": "A2 consumes the complete DocumentIndex in bounded pages and queues a complete plan for approval."
+    },
+    "schemaVersion": "1.0.0.0"
+  }
+}

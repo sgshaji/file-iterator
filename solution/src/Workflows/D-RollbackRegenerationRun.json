@@ -1,5 +1,5 @@
 {
-  "$comment": "FLOW D - Rollback Regeneration Run. Restores the archived previous version of every output written by a run. Rarely used, but it is the reason Flow B archives before overwriting: without it, recovering from a bad run means regenerating everything again, paying a second full run of agent calls on top of the damage. See docs/Template-Regeneration-Solution-Design.md section 8.",
+  "$comment": "FLOW D1 - Start rollback. Validates LIFO eligibility and locks a terminal run; D2 restores manifests in bounded pages.",
   "properties": {
     "connectionReferences": {
       "shared_sharepointonline": {
@@ -83,7 +83,7 @@
             "actions": {}
           }
         },
-        "Get_succeeded_items_for_run": {
+        "Get_run_to_lock": {
           "runAfter": {
             "Require_explicit_confirmation": [
               "Succeeded"
@@ -98,270 +98,16 @@
             },
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-              "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and Status eq 'Succeeded'",
-              "$top": 5000
-            },
-            "authentication": "@parameters('$authentication')"
-          },
-          "description": "A succeeded work item carries the complete agent result, including every destination and archived filename."
-        },
-        "For_each_item_to_restore": {
-          "runAfter": {
-            "Get_succeeded_items_for_run": [
-              "Succeeded"
-            ]
-          },
-          "type": "Foreach",
-          "foreach": "@body('Get_succeeded_items_for_run')?['value']",
-          "runtimeConfiguration": {
-            "concurrency": {
-              "repetitions": 1
-            }
-          },
-          "actions": {
-            "PARSE_agent_result": {
-              "runAfter": {},
-              "type": "ParseJson",
-              "inputs": {
-                "content": "@items('For_each_item_to_restore')?['AgentResultJson']",
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "status",
-                    "outputs"
-                  ],
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "OK"
-                      ]
-                    },
-                    "outputs": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": [
-                          "destinationFolderPath",
-                          "outputFileName",
-                          "archivedAs"
-                        ],
-                        "properties": {
-                          "destinationFolderPath": {
-                            "type": "string"
-                          },
-                          "outputFileName": {
-                            "type": "string"
-                          },
-                          "archivedAs": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "For_each_output": {
-              "runAfter": {
-                "PARSE_agent_result": [
-                  "Succeeded"
-                ]
-              },
-              "type": "Foreach",
-              "foreach": "@body('PARSE_agent_result')?['outputs']",
-              "runtimeConfiguration": {
-                "concurrency": {
-                  "repetitions": 1
-                }
-              },
-              "actions": {
-                "DELETE_generated_output": {
-                  "runAfter": {},
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "HttpRequest",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "parameters/method": "DELETE",
-                      "parameters/uri": "@{concat('_api/web/GetFileByServerRelativePath(decodedurl=''', replace(concat(items('For_each_output')?['destinationFolderPath'], '/', items('For_each_output')?['outputFileName']), '''', ''''''), ''')')}",
-                      "parameters/headers": {
-                        "Accept": "application/json;odata=nometadata",
-                        "IF-MATCH": "*"
-                      }
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  },
-                  "description": "Return the destination to its pre-run state before restoring every archived original. A missing output is harmless, so restoration also runs after this action fails."
-                },
-                "For_each_archived_file": {
-                  "runAfter": {
-                    "DELETE_generated_output": [
-                      "Succeeded",
-                      "Failed"
-                    ]
-                  },
-                  "type": "Foreach",
-                  "foreach": "@items('For_each_output')?['archivedAs']",
-                  "runtimeConfiguration": {
-                    "concurrency": {
-                      "repetitions": 1
-                    }
-                  },
-                  "actions": {
-                    "READ_archived_file": {
-                      "runAfter": {},
-                      "type": "OpenApiConnection",
-                      "inputs": {
-                        "host": {
-                          "connectionName": "shared_sharepointonline",
-                          "operationId": "GetFileContentByPath",
-                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                        },
-                        "parameters": {
-                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                          "path": "@{concat(items('For_each_output')?['destinationFolderPath'], '/', parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)'), '/', items('For_each_archived_file'))}",
-                          "inferContentType": false
-                        },
-                        "authentication": "@parameters('$authentication')"
-                      }
-                    },
-                    "RESTORE_archived_file": {
-                      "runAfter": {
-                        "READ_archived_file": [
-                          "Succeeded"
-                        ]
-                      },
-                      "type": "OpenApiConnection",
-                      "inputs": {
-                        "host": {
-                          "connectionName": "shared_sharepointonline",
-                          "operationId": "CreateFile",
-                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                        },
-                        "parameters": {
-                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                          "folderPath": "@items('For_each_output')?['destinationFolderPath']",
-                          "name": "@{concat(substring(items('For_each_archived_file'), 0, sub(lastIndexOf(items('For_each_archived_file'), '.'), 16)), substring(items('For_each_archived_file'), lastIndexOf(items('For_each_archived_file'), '.')))}",
-                          "body": "@body('READ_archived_file')"
-                        },
-                        "authentication": "@parameters('$authentication')"
-                      },
-                      "description": "archive-name guarantees a final _yyyyMMdd-HHmmss suffix. Removing those 16 characters reconstructs the exact displaced filename."
-                    }
-                  }
-                }
-              }
-            },
-            "Mark_item_rolled_back": {
-              "runAfter": {
-                "For_each_output": [
-                  "Succeeded"
-                ]
-              },
-              "type": "OpenApiConnection",
-              "inputs": {
-                "host": {
-                  "connectionName": "shared_sharepointonline",
-                  "operationId": "PatchItem",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                },
-                "parameters": {
-                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                  "id": "@items('For_each_item_to_restore')?['ID']",
-                  "item/Status/Value": "RolledBack",
-                  "item/RollbackResultJson": "@{concat('{\"status\":\"RolledBack\",\"outputCount\":', string(length(body('PARSE_agent_result')?['outputs'])), ',\"completedAt\":\"', utcNow(), '\"}')}",
-                  "item/ErrorMessage": ""
-                },
-                "authentication": "@parameters('$authentication')"
-              }
-            },
-            "Record_parse_failure": {
-              "runAfter": {
-                "PARSE_agent_result": [
-                  "Failed"
-                ]
-              },
-              "type": "OpenApiConnection",
-              "inputs": {
-                "host": {
-                  "connectionName": "shared_sharepointonline",
-                  "operationId": "PatchItem",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                },
-                "parameters": {
-                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                  "id": "@items('For_each_item_to_restore')?['ID']",
-                  "item/RollbackResultJson": "@{concat('{\"status\":\"Failed\",\"stage\":\"ParseAgentResult\",\"completedAt\":\"', utcNow(), '\"}')}",
-                  "item/ErrorMessage": "Rollback could not parse AgentResultJson."
-                },
-                "authentication": "@parameters('$authentication')"
-              }
-            },
-            "Record_restore_failure": {
-              "runAfter": {
-                "For_each_output": [
-                  "Failed",
-                  "TimedOut"
-                ]
-              },
-              "type": "OpenApiConnection",
-              "inputs": {
-                "host": {
-                  "connectionName": "shared_sharepointonline",
-                  "operationId": "PatchItem",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                },
-                "parameters": {
-                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                  "id": "@items('For_each_item_to_restore')?['ID']",
-                  "item/RollbackResultJson": "@{concat('{\"status\":\"Failed\",\"completedAt\":\"', utcNow(), '\"}')}",
-                  "item/ErrorMessage": "@{take(string(result('For_each_output')), 4000)}"
-                },
-                "authentication": "@parameters('$authentication')"
-              },
-              "description": "Leave the item Succeeded so another rollback attempt can retry it. Never report the run RolledBack while any item remains."
-            }
-          }
-        },
-        "Get_remaining_succeeded_items": {
-          "runAfter": {
-            "For_each_item_to_restore": [
-              "Succeeded",
-              "Failed"
-            ]
-          },
-          "type": "OpenApiConnection",
-          "inputs": {
-            "host": {
-              "connectionName": "shared_sharepointonline",
-              "operationId": "GetItems",
-              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-            },
-            "parameters": {
-              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-              "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and Status eq 'Succeeded'",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Completed' or Status eq 'CompletedWithErrors')",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"
           }
         },
-        "Get_run_record": {
+        "Get_newer_live_run": {
           "runAfter": {
-            "Get_remaining_succeeded_items": [
+            "Get_run_to_lock": [
               "Succeeded"
             ]
           },
@@ -375,15 +121,16 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}'",
+              "$filter": "ID gt @{int(coalesce(first(body('Get_run_to_lock')?['value'])?['ID'], 2147483647))} and IsDryRun eq 0 and Status ne 'Cancelled' and Status ne 'RolledBack'",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"
-          }
+          },
+          "description": "Conservative LIFO guard. A newer live run may own the current output, so older runs must be rolled back only after it."
         },
-        "Mark_run_rolled_back": {
+        "Validate_terminal_run": {
           "runAfter": {
-            "Get_run_record": [
+            "Get_newer_live_run": [
               "Succeeded"
             ]
           },
@@ -392,20 +139,20 @@
             "and": [
               {
                 "equals": [
-                  "@length(body('Get_remaining_succeeded_items')?['value'])",
-                  0
+                  "@length(body('Get_run_to_lock')?['value'])",
+                  1
                 ]
               },
               {
-                "greater": [
-                  "@length(body('Get_run_record')?['value'])",
+                "equals": [
+                  "@length(body('Get_newer_live_run')?['value'])",
                   0
                 ]
               }
             ]
           },
           "actions": {
-            "Patch_run": {
+            "Lock_run_for_rollback": {
               "runAfter": {},
               "type": "OpenApiConnection",
               "inputs": {
@@ -417,9 +164,9 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                  "id": "@first(body('Get_run_record')?['value'])?['ID']",
-                  "item/Status/Value": "RolledBack",
-                  "item/SummaryMessage": "All generated outputs were removed and every archived original reported by the agent was restored."
+                  "id": "@first(body('Get_run_to_lock')?['value'])?['ID']",
+                  "item/Status/Value": "RollbackInProgress",
+                  "item/RollbackCursorId": 0
                 },
                 "authentication": "@parameters('$authentication')"
               }
@@ -427,14 +174,14 @@
           },
           "else": {
             "actions": {
-              "Terminate_incomplete_rollback": {
+              "Terminate_run_not_terminal": {
                 "runAfter": {},
                 "type": "Terminate",
                 "inputs": {
                   "runStatus": "Failed",
                   "runError": {
-                    "code": "RollbackIncomplete",
-                    "message": "One or more work items could not be restored. Review RollbackResultJson and ErrorMessage, then retry the rollback."
+                    "code": "RunNotRollbackEligible",
+                    "message": "Only Completed or CompletedWithErrors runs can be rolled back, and newer live runs must be rolled back first."
                   }
                 }
               }
