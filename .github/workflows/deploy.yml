@@ -1,0 +1,98 @@
+name: Deploy solution
+
+# Deployment is deliberately manual (workflow_dispatch). This solution's
+# flows overwrite documents and consume metered agent capacity, so an
+# automatic deploy on merge is the wrong default: a bad flow definition
+# reaching production unattended is expensive to undo.
+#
+# Both target environments are GitHub Environments, so required reviewers
+# and secrets are configured in repository settings rather than here.
+#
+# fi_DryRun is forced to true on every deploy. Turning it off is a separate,
+# deliberate act performed in the Power Platform environment after a plan has
+# been inspected. See docs/Template-Regeneration-Solution-Design.md section 12.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - test
+          - prod
+      solution-type:
+        description: 'Solution type to import'
+        required: true
+        default: 'Managed'
+        type: choice
+        options:
+          - Managed
+          - Unmanaged
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Static validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify provisioning template matches lists.json
+        run: python3 scripts/generate_pnp_template.py --check
+
+      - name: Verify deployment settings match environment-variables.json
+        run: python3 scripts/generate_deployment_settings.py --check
+
+      - name: Validate flow definitions, columns and configuration
+        run: python3 scripts/validate_solution.py
+
+  deploy:
+    name: Pack and import
+    runs-on: windows-latest
+    needs: validate
+    environment: ${{ inputs.target }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Power Platform tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Pack solution
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: solution/src
+          solution-file: out/FileIteratorTemplateRegeneration.zip
+          solution-type: ${{ inputs.solution-type }}
+
+      - name: Import solution
+        uses: microsoft/powerplatform-actions/import-solution@v1
+        with:
+          environment-url: ${{ vars.POWER_PLATFORM_ENVIRONMENT_URL }}
+          app-id: ${{ vars.POWER_PLATFORM_APP_ID }}
+          client-secret: ${{ secrets.POWER_PLATFORM_CLIENT_SECRET }}
+          tenant-id: ${{ vars.POWER_PLATFORM_TENANT_ID }}
+          solution-file: out/FileIteratorTemplateRegeneration.zip
+          # Environment variable values and connection references differ per
+          # environment and are supplied by the deployment settings file, not
+          # baked into the solution. Never point a test deployment at the
+          # production document library.
+          deployment-settings-file: solution/config/deployment-settings.${{ inputs.target }}.json
+          force-overwrite: true
+          run-asynchronously: true
+
+      - name: Post-deploy reminder
+        shell: bash
+        run: |
+          echo "::notice title=Dry run::fi_DryRun must remain true until a plan has been reviewed in ${{ inputs.target }}."
+          echo "::notice title=Verification::Flow definitions in this repository have never been executed. Run the checklist in solution/README.md before enabling writes."

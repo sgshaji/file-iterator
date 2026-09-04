@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" OrganizationVersion="9.2.26081.168" OrganizationSchemaType="Standard">
+  <!--
+    PD Conversion Harness - customizations.
+
+    Compare with the reference export's customizations.xml, which declared five
+    connection references: three named after the agent's schema name
+    (cree1_pdconversionassistant_08zNQw.cr.*) and two auto-generated ones under the
+    default publisher (new_sharedagentnode_94058533, new_sharedsharepointonline_199f1).
+
+    The three cree1_* references belong to the agent and are used by its tools. The
+    harness declares neither them nor the bot components: reusing the agent means
+    referencing it, not absorbing it.
+
+    That leaves the minimum set - one SharePoint connection and one agent
+    connection - under a deliberate prefix rather than an auto-generated name.
+  -->
+  <Entities></Entities>
+  <Roles></Roles>
+  <Workflows>
+    <Workflow WorkflowId="{a7c41f52-8e3b-4d16-9f20-6b8e2d4c71a5}" Name="PD Conversion Harness">
+      <JsonFileName>/Workflows/PDConversionHarness-A7C41F52-8E3B-4D16-9F20-6B8E2D4C71A5.json</JsonFileName>
+      <Type>1</Type>
+      <Subprocess>0</Subprocess>
+      <Category>5</Category>
+      <Mode>0</Mode>
+      <Scope>4</Scope>
+      <OnDemand>0</OnDemand>
+      <TriggerOnCreate>0</TriggerOnCreate>
+      <TriggerOnDelete>0</TriggerOnDelete>
+      <AsyncAutodelete>0</AsyncAutodelete>
+      <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+      <StateCode>0</StateCode>
+      <StatusCode>1</StatusCode>
+      <RunAs>1</RunAs>
+      <IsTransacted>1</IsTransacted>
+      <IntroducedVersion>1.0</IntroducedVersion>
+      <IsCustomizable>1</IsCustomizable>
+      <BusinessProcessType>0</BusinessProcessType>
+      <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+      <ModernFlowType>1</ModernFlowType>
+      <PrimaryEntity>none</PrimaryEntity>
+      <LocalizedNames>
+        <LocalizedName languagecode="1033" description="PD Conversion Harness" />
+      </LocalizedNames>
+    </Workflow>
+  </Workflows>
+  <FieldSecurityProfiles></FieldSecurityProfiles>
+  <Templates />
+  <EntityMaps />
+  <EntityRelationships />
+  <OrganizationSettings />
+  <optionsets />
+  <CustomControls />
+  <EntityDataProviders />
+  <connectionreferences>
+    <connectionreference connectionreferencelogicalname="pdh_sharedsharepointonline">
+      <connectionreferencedisplayname>SharePoint (PD conversion harness)</connectionreferencedisplayname>
+      <connectorid>/providers/Microsoft.PowerApps/apis/shared_sharepointonline</connectorid>
+      <iscustomizable>1</iscustomizable>
+      <promptingbehavior>0</promptingbehavior>
+      <statecode>0</statecode>
+      <statuscode>1</statuscode>
+    </connectionreference>
+    <connectionreference connectionreferencelogicalname="pdh_sharedagentnode">
+      <connectionreferencedisplayname>Agent (PD conversion harness)</connectionreferencedisplayname>
+      <connectorid>/providers/Microsoft.PowerApps/apis/shared_agentnode</connectorid>
+      <iscustomizable>1</iscustomizable>
+      <promptingbehavior>0</promptingbehavior>
+      <statecode>0</statecode>
+      <statuscode>1</statuscode>
+    </connectionreference>
+  </connectionreferences>
+  <environmentvariabledefinitions>
+    <environmentvariabledefinition schemaname="pdh_SiteUrl">
+      <displayname>Site URL</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Absolute site URL. Passed to the agent as siteUrl and used as the dataset parameter on SharePoint actions.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_LibraryUrlName">
+      <displayname>Library URL Name</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>The library's URL name, not its display name.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_SourceRootPath">
+      <displayname>Source Root Path</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Server-relative path of the folder holding position folders. The walk starts here.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_TemplateFolderPath">
+      <displayname>Template Folder Path</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Server-relative path of the template FOLDER, passed to the agent as templatePath. Must not overlap the source root.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_ExcludedFolderNames">
+      <displayname>Excluded Folder Names</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>Archive,AD Documents</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Folder names never descended into. Must match pd_tools.py OUTPUT_FOLDERS.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_SourceExtensions">
+      <displayname>Source Extensions</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>.pdf,.docx</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Convertible extensions. Must match pd_tools.py CONVERTIBLE_EXT.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_MaxDocuments">
+      <displayname>Max Documents Per Run</displayname>
+      <type>100000001</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>1</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Hard cap on agent invocations per run. The primary cost control.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_DryRun">
+      <displayname>Dry Run</displayname>
+      <type>100000002</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>1</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>When true, plan only. No agent invocation, no cost.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_MaxFolderDepth">
+      <displayname>Max Folder Depth</displayname>
+      <type>100000001</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>8</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Depth ceiling for the breadth-first walk.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_MaxFoldersScanned">
+      <displayname>Max Folders Scanned</displayname>
+      <type>100000001</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>500</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Ceiling on folders enumerated per run.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_AgentId">
+      <displayname>Agent ID</displayname>
+      <type>100000000</type>
+      <isrequired>1</isrequired>
+      <defaultvalue>cree1_pdconversionassistant_08zNQw</defaultvalue>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Schema name of the existing PD Conversion Assistant agent. Reused, not recreated.</description>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="pdh_RunLabel">
+      <displayname>Run Label</displayname>
+      <type>100000000</type>
+      <isrequired>0</isrequired>
+      <introducedversion>1.0.0.0</introducedversion>
+      <description>Optional free-text label stamped on run output for correlation.</description>
+    </environmentvariabledefinition>
+  </environmentvariabledefinitions>
+  <Languages>
+    <Language>1033</Language>
+  </Languages>
+</ImportExportXml>

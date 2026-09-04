@@ -1,0 +1,965 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "api": {
+          "name": "shared_sharepointonline"
+        },
+        "connection": {
+          "connectionReferenceLogicalName": "pdh_sharedsharepointonline"
+        },
+        "runtimeSource": "embedded"
+      },
+      "shared_agentnode": {
+        "api": {
+          "name": "shared_agentnode"
+        },
+        "connection": {
+          "connectionReferenceLogicalName": "pdh_sharedagentnode"
+        },
+        "runtimeSource": "embedded"
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        },
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        }
+      },
+      "triggers": {
+        "manual": {
+          "type": "Request",
+          "kind": "Button",
+          "description": "Explicit invocation. Every input defaults from an environment variable when left blank, so a normal run needs no input at all and a test run can override one value without editing the flow.",
+          "inputs": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "sourceRootPath": {
+                  "type": "string",
+                  "title": "Source root path (blank = configured value)",
+                  "description": "Server-relative path of the folder containing position folders."
+                },
+                "templateFolderPath": {
+                  "type": "string",
+                  "title": "Template folder path (blank = configured value)",
+                  "description": "Server-relative path of the template folder. A folder means every .docx in it."
+                },
+                "maxDocuments": {
+                  "type": "integer",
+                  "title": "Max documents (0 = configured value)",
+                  "description": "Hard cap on agent invocations for this run."
+                },
+                "dryRun": {
+                  "type": "boolean",
+                  "title": "Dry run",
+                  "description": "Plan only. No agent invocation, no metered cost."
+                },
+                "runLabel": {
+                  "type": "string",
+                  "title": "Run label",
+                  "description": "Optional. Recorded in the output for correlation."
+                }
+              }
+            }
+          }
+        }
+      },
+      "actions": {
+        "INIT_run_id": {
+          "type": "InitializeVariable",
+          "description": "Correlation id for this run. Stamped on every emitted record.",
+          "runAfter": {},
+          "inputs": {
+            "variables": [
+              {
+                "name": "runId",
+                "type": "string",
+                "value": "@{utcNow('yyyyMMdd-HHmmss')}-@{substring(guid(), 0, 8)}"
+              }
+            ]
+          }
+        },
+        "RESOLVE_config": {
+          "type": "Compose",
+          "description": "Raw configuration: trigger input where supplied, environment variable otherwise.",
+          "runAfter": {
+            "INIT_run_id": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "siteUrl": "@parameters('pdh_SiteUrl (pdh_SiteUrl)')",
+            "libraryUrlName": "@parameters('pdh_LibraryUrlName (pdh_LibraryUrlName)')",
+            "sourceRootPath": "@{coalesce(triggerBody()?['sourceRootPath'], '')}",
+            "templateFolderPath": "@{coalesce(triggerBody()?['templateFolderPath'], '')}",
+            "excludedFolderNames": "@parameters('pdh_ExcludedFolderNames (pdh_ExcludedFolderNames)')",
+            "sourceExtensions": "@parameters('pdh_SourceExtensions (pdh_SourceExtensions)')",
+            "maxDocuments": "@coalesce(triggerBody()?['maxDocuments'], 0)",
+            "dryRun": "@coalesce(triggerBody()?['dryRun'], parameters('pdh_DryRun (pdh_DryRun)'))",
+            "maxFolderDepth": "@parameters('pdh_MaxFolderDepth (pdh_MaxFolderDepth)')",
+            "maxFoldersScanned": "@parameters('pdh_MaxFoldersScanned (pdh_MaxFoldersScanned)')",
+            "agentId": "@parameters('pdh_AgentId (pdh_AgentId)')",
+            "runLabel": "@{coalesce(triggerBody()?['runLabel'], parameters('pdh_RunLabel (pdh_RunLabel)'))}"
+          }
+        },
+        "RESOLVE_effective": {
+          "type": "Compose",
+          "description": "Effective configuration. An empty string is treated as 'not supplied': coalesce only catches null, so a blank text box would otherwise start the walk at the site root.",
+          "runAfter": {
+            "RESOLVE_config": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "siteUrl": "@outputs('RESOLVE_config')['siteUrl']",
+            "libraryUrlName": "@outputs('RESOLVE_config')['libraryUrlName']",
+            "sourceRootPath": "@if(empty(outputs('RESOLVE_config')['sourceRootPath']), parameters('pdh_SourceRootPath (pdh_SourceRootPath)'), outputs('RESOLVE_config')['sourceRootPath'])",
+            "templateFolderPath": "@if(empty(outputs('RESOLVE_config')['templateFolderPath']), parameters('pdh_TemplateFolderPath (pdh_TemplateFolderPath)'), outputs('RESOLVE_config')['templateFolderPath'])",
+            "excludedFolderNames": "@split(outputs('RESOLVE_config')['excludedFolderNames'], ',')",
+            "sourceExtensions": "@split(toLower(outputs('RESOLVE_config')['sourceExtensions']), ',')",
+            "maxDocuments": "@if(equals(outputs('RESOLVE_config')['maxDocuments'], 0), parameters('pdh_MaxDocuments (pdh_MaxDocuments)'), outputs('RESOLVE_config')['maxDocuments'])",
+            "dryRun": "@outputs('RESOLVE_config')['dryRun']",
+            "maxFolderDepth": "@outputs('RESOLVE_config')['maxFolderDepth']",
+            "maxFoldersScanned": "@outputs('RESOLVE_config')['maxFoldersScanned']",
+            "agentId": "@outputs('RESOLVE_config')['agentId']",
+            "runLabel": "@outputs('RESOLVE_config')['runLabel']"
+          }
+        },
+        "GATE_problems": {
+          "type": "Compose",
+          "description": "Collect every input problem in one pass, so a caller sees all of them at once.",
+          "runAfter": {
+            "RESOLVE_effective": [
+              "Succeeded"
+            ]
+          },
+          "inputs": "@trim(concat(if(empty(outputs('RESOLVE_effective')['siteUrl']), 'pdh_SiteUrl is not set.', ''), if(empty(outputs('RESOLVE_effective')['sourceRootPath']), 'Source root path is not set.', ''), if(empty(outputs('RESOLVE_effective')['templateFolderPath']), 'Template folder path is not set.', ''), if(lessOrEquals(outputs('RESOLVE_effective')['maxDocuments'], 0), 'Max documents must be greater than zero.', '')))"
+        },
+        "GATE_overlap": {
+          "type": "Compose",
+          "description": "Template folder and source root must be disjoint. If they overlap, the walk enumerates templates as sources and the agent is asked to convert its own templates.",
+          "runAfter": {
+            "GATE_problems": [
+              "Succeeded"
+            ]
+          },
+          "inputs": "@or(startsWith(concat(toLower(outputs('RESOLVE_effective')['templateFolderPath']), '/'), concat(toLower(outputs('RESOLVE_effective')['sourceRootPath']), '/')), startsWith(concat(toLower(outputs('RESOLVE_effective')['sourceRootPath']), '/'), concat(toLower(outputs('RESOLVE_effective')['templateFolderPath']), '/')))"
+        },
+        "GATE_check": {
+          "type": "If",
+          "description": "Stop before enumeration if configuration is unusable.",
+          "runAfter": {
+            "GATE_overlap": [
+              "Succeeded"
+            ]
+          },
+          "expression": {
+            "or": [
+              {
+                "not": {
+                  "equals": [
+                    "@outputs('GATE_problems')",
+                    ""
+                  ]
+                }
+              },
+              {
+                "equals": [
+                  "@outputs('GATE_overlap')",
+                  true
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "GATE_fail": {
+              "type": "Terminate",
+              "description": "Named, actionable failure. Never a generic 'flow failed'.",
+              "runAfter": {},
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "InvalidConfiguration",
+                  "message": "@{concat('Harness configuration is invalid. ', outputs('GATE_problems'), if(equals(outputs('GATE_overlap'), true), ' Template folder path and source root path overlap; they must be disjoint.', ''))}"
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        },
+        "INIT_frontier": {
+          "type": "InitializeVariable",
+          "description": "Folders still to visit. Seeded with the source root.",
+          "runAfter": {
+            "GATE_check": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "frontier",
+                "type": "array",
+                "value": []
+              }
+            ]
+          }
+        },
+        "INIT_next_frontier": {
+          "type": "InitializeVariable",
+          "description": "Folders discovered at the current depth, visited on the next pass.",
+          "runAfter": {
+            "INIT_frontier": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "nextFrontier",
+                "type": "array",
+                "value": []
+              }
+            ]
+          }
+        },
+        "INIT_candidates": {
+          "type": "InitializeVariable",
+          "description": "One entry per POSITION FOLDER, not per file. The skill converts one source per invocation and decides for itself which file of a pdf/docx pair to convert; iterating files would invoke the agent twice for the same position and pay for a SKIPPED reply.",
+          "runAfter": {
+            "INIT_next_frontier": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "candidates",
+                "type": "array",
+                "value": []
+              }
+            ]
+          }
+        },
+        "INIT_depth": {
+          "type": "InitializeVariable",
+          "description": "Current walk depth, against pdh_MaxFolderDepth.",
+          "runAfter": {
+            "INIT_candidates": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "depth",
+                "type": "integer",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "INIT_folders_scanned": {
+          "type": "InitializeVariable",
+          "description": "Folders enumerated so far, against pdh_MaxFoldersScanned.",
+          "runAfter": {
+            "INIT_depth": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "foldersScanned",
+                "type": "integer",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "INIT_walk_truncated": {
+          "type": "InitializeVariable",
+          "description": "Set when a ceiling stopped the walk early. A truncated walk that reports itself is a bounded run; one that does not is a wrong answer presented as a complete one.",
+          "runAfter": {
+            "INIT_folders_scanned": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "walkTruncated",
+                "type": "string",
+                "value": ""
+              }
+            ]
+          }
+        },
+        "SEED_frontier": {
+          "type": "SetVariable",
+          "description": "Seed the walk at the source root.",
+          "runAfter": {
+            "INIT_walk_truncated": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "name": "frontier",
+            "value": "@createArray(outputs('RESOLVE_effective')['sourceRootPath'])"
+          }
+        },
+        "DO_UNTIL_walk": {
+          "type": "Until",
+          "description": "One iteration per depth level. Bounded by pdh_MaxFolderDepth and by pdh_MaxFoldersScanned so a pathological tree cannot produce an unbounded run.",
+          "runAfter": {
+            "SEED_frontier": [
+              "Succeeded"
+            ]
+          },
+          "expression": "@or(empty(variables('frontier')), greaterOrEquals(variables('depth'), outputs('RESOLVE_effective')['maxFolderDepth']), greaterOrEquals(variables('foldersScanned'), outputs('RESOLVE_effective')['maxFoldersScanned']))",
+          "limit": {
+            "count": 60,
+            "timeout": "PT2H"
+          },
+          "actions": {
+            "RESET_next_frontier": {
+              "type": "SetVariable",
+              "description": "Clear the next-depth accumulator at the start of each level.",
+              "runAfter": {},
+              "inputs": {
+                "name": "nextFrontier",
+                "value": "@json('[]')"
+              }
+            },
+            "FOR_EACH_folder": {
+              "type": "Foreach",
+              "description": "Visit every folder at the current depth.",
+              "runAfter": {
+                "RESET_next_frontier": [
+                  "Succeeded"
+                ]
+              },
+              "foreach": "@variables('frontier')",
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              },
+              "actions": {
+                "ENUMERATE_direct_children": {
+                  "type": "OpenApiConnection",
+                  "description": "THE CRITICAL CALL. Direct children only, one request per folder. GetFolderByServerRelativePath(decodedurl=...) is used rather than ByServerRelativeUrl because the Url variant fails on folder names containing # or %, which are common in document libraries. $expand=Folders,Files returns subfolders and files together, halving the call count against the 600-per-minute connector limit.",
+                  "runAfter": {},
+                  "inputs": {
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "HttpRequest"
+                    },
+                    "parameters": {
+                      "dataset": "@outputs('RESOLVE_effective')['siteUrl']",
+                      "parameters/method": "GET",
+                      "parameters/uri": "@{concat('_api/web/GetFolderByServerRelativePath(decodedurl=''', items('FOR_EACH_folder'), ''')?$expand=Folders,Files&$select=Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/TimeLastModified,Files/Length')}",
+                      "parameters/headers": {
+                        "Accept": "application/json;odata=nometadata"
+                      }
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "COUNT_folder": {
+                  "type": "IncrementVariable",
+                  "description": "Count folders against the scan ceiling.",
+                  "runAfter": {
+                    "ENUMERATE_direct_children": [
+                      "Succeeded"
+                    ]
+                  },
+                  "inputs": {
+                    "name": "foldersScanned",
+                    "value": 1
+                  }
+                },
+                "SELECT_convertible_files": {
+                  "type": "Compose",
+                  "description": "How many convertible files this folder holds directly. Extensions must match pd_tools.py CONVERTIBLE_EXT; a folder with none is a container, not a position.",
+                  "runAfter": {
+                    "COUNT_folder": [
+                      "Succeeded"
+                    ]
+                  },
+                  "inputs": "@length(filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.'))))), true)))"
+                },
+                "IS_POSITION_FOLDER": {
+                  "type": "If",
+                  "description": "A folder holding at least one convertible file directly is a position folder and becomes one unit of work.",
+                  "runAfter": {
+                    "SELECT_convertible_files": [
+                      "Succeeded"
+                    ]
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "greater": [
+                          "@outputs('SELECT_convertible_files')",
+                          0
+                        ]
+                      }
+                    ]
+                  },
+                  "actions": {
+                    "ADD_candidate": {
+                      "type": "AppendToArrayVariable",
+                      "description": "One candidate per position folder. `files` is carried so the plan is inspectable and so the prompt can name a source without a second SharePoint call.",
+                      "runAfter": {},
+                      "inputs": {
+                        "name": "candidates",
+                        "value": {
+                          "positionFolderPath": "@items('FOR_EACH_folder')",
+                          "positionFolderName": "@{last(split(items('FOR_EACH_folder'), '/'))}",
+                          "convertibleFileCount": "@outputs('SELECT_convertible_files')",
+                          "depth": "@variables('depth')",
+                          "files": "@filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], toLower(concat('.', last(split(item()?['Name'], '.'))))), true))"
+                        }
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {}
+                  }
+                },
+                "FOR_EACH_child_folder": {
+                  "type": "Foreach",
+                  "description": "Queue non-excluded subfolders for the next depth.",
+                  "runAfter": {
+                    "IS_POSITION_FOLDER": [
+                      "Succeeded"
+                    ]
+                  },
+                  "foreach": "@coalesce(body('ENUMERATE_direct_children')?['Folders'], json('[]'))",
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 1
+                    }
+                  },
+                  "actions": {
+                    "FILTER_excluded_folders": {
+                      "type": "If",
+                      "description": "Exclusions applied BEFORE descending, so an excluded subtree costs nothing at all. These names are the skill's own output folders (pd_tools.py OUTPUT_FOLDERS); descending into them would feed the agent documents it previously produced.",
+                      "runAfter": {},
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@contains(outputs('RESOLVE_effective')['excludedFolderNames'], item()?['Name'])",
+                              false
+                            ]
+                          }
+                        ]
+                      },
+                      "actions": {
+                        "QUEUE_child_folder": {
+                          "type": "AppendToArrayVariable",
+                          "description": "Enqueue a non-excluded child folder for the next depth.",
+                          "runAfter": {},
+                          "inputs": {
+                            "name": "nextFrontier",
+                            "value": "@item()?['ServerRelativeUrl']"
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "ADVANCE_frontier": {
+              "type": "SetVariable",
+              "description": "Descend one level.",
+              "runAfter": {
+                "FOR_EACH_folder": [
+                  "Succeeded"
+                ]
+              },
+              "inputs": {
+                "name": "frontier",
+                "value": "@variables('nextFrontier')"
+              }
+            },
+            "ADVANCE_depth": {
+              "type": "IncrementVariable",
+              "description": "Track depth for the ceiling and for the plan.",
+              "runAfter": {
+                "ADVANCE_frontier": [
+                  "Succeeded"
+                ]
+              },
+              "inputs": {
+                "name": "depth",
+                "value": 1
+              }
+            }
+          }
+        },
+        "CHECK_truncation": {
+          "type": "If",
+          "description": "Record whether a ceiling stopped the walk. Silence here would present a partial enumeration as a complete one.",
+          "runAfter": {
+            "DO_UNTIL_walk": [
+              "Succeeded"
+            ]
+          },
+          "expression": {
+            "and": [
+              {
+                "not": {
+                  "equals": [
+                    "@empty(variables('frontier'))",
+                    true
+                  ]
+                }
+              }
+            ]
+          },
+          "actions": {
+            "SET_truncated": {
+              "type": "SetVariable",
+              "description": "Name the ceiling that was hit and what to change.",
+              "runAfter": {},
+              "inputs": {
+                "name": "walkTruncated",
+                "value": "@{concat('Walk stopped early: ', string(length(variables('frontier'))), ' folder(s) left unvisited at depth ', string(variables('depth')), '. Raise pdh_MaxFolderDepth or pdh_MaxFoldersScanned.')}"
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        },
+        "PLAN_selected": {
+          "type": "Compose",
+          "description": "Apply the cap. Deterministic: the walk is breadth-first and ordered, so the same inputs select the same candidates.",
+          "runAfter": {
+            "CHECK_truncation": [
+              "Succeeded"
+            ]
+          },
+          "inputs": "@take(variables('candidates'), outputs('RESOLVE_effective')['maxDocuments'])"
+        },
+        "PLAN": {
+          "type": "Compose",
+          "description": "OBSERVABLE STAGE 1. The complete plan, before any spend. `plannedInvocations` is the number of metered agent calls this run will make - the single number worth checking before enabling writes.",
+          "runAfter": {
+            "PLAN_selected": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "runId": "@{variables('runId')}",
+            "runLabel": "@outputs('RESOLVE_effective')['runLabel']",
+            "plannedAt": "@{utcNow()}",
+            "dryRun": "@outputs('RESOLVE_effective')['dryRun']",
+            "siteUrl": "@outputs('RESOLVE_effective')['siteUrl']",
+            "sourceRootPath": "@outputs('RESOLVE_effective')['sourceRootPath']",
+            "templateFolderPath": "@outputs('RESOLVE_effective')['templateFolderPath']",
+            "excludedFolderNames": "@outputs('RESOLVE_effective')['excludedFolderNames']",
+            "sourceExtensions": "@outputs('RESOLVE_effective')['sourceExtensions']",
+            "foldersScanned": "@variables('foldersScanned')",
+            "depthReached": "@variables('depth')",
+            "walkTruncated": "@variables('walkTruncated')",
+            "positionFoldersFound": "@length(variables('candidates'))",
+            "maxDocuments": "@outputs('RESOLVE_effective')['maxDocuments']",
+            "plannedInvocations": "@length(outputs('PLAN_selected'))",
+            "deferred": "@sub(length(variables('candidates')), length(outputs('PLAN_selected')))",
+            "candidates": "@outputs('PLAN_selected')",
+            "allPositionFolders": "@variables('candidates')"
+          }
+        },
+        "INIT_results": {
+          "type": "InitializeVariable",
+          "description": "One outcome record per invocation.",
+          "runAfter": {
+            "PLAN": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "results",
+                "type": "array",
+                "value": []
+              }
+            ]
+          }
+        },
+        "INIT_agent_calls": {
+          "type": "InitializeVariable",
+          "description": "Count of metered agent invocations. The headline cost figure; it must never exceed maxDocuments.",
+          "runAfter": {
+            "INIT_results": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "variables": [
+              {
+                "name": "agentCallCount",
+                "type": "integer",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "EXECUTE_check_dry_run": {
+          "type": "If",
+          "description": "THE COST GATE. In a dry run nothing below this point executes and the agent is never invoked. Everything above - the walk, the exclusions, the plan - has already run and is inspectable.",
+          "runAfter": {
+            "INIT_agent_calls": [
+              "Succeeded"
+            ]
+          },
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@outputs('RESOLVE_effective')['dryRun']",
+                  false
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "FOR_EACH_candidate": {
+              "type": "Foreach",
+              "description": "One iteration per position folder. Sequential by default: concurrency multiplies the capacity burn rate, and the reference flow's own concurrency of 1 suggests this was never measured. Raise it only after measuring.",
+              "runAfter": {},
+              "foreach": "@outputs('PLAN_selected')",
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              },
+              "actions": {
+                "COMPOSE_prompt": {
+                  "type": "Compose",
+                  "description": "OBSERVABLE STAGE 2. The exact prompt text, in its own action, so the run history answers 'what did the flow send to the agent'. templatePath is a FOLDER by design - SKILL.md: 'a path to a folder means every .docx in it... A template folder is the normal case.' Paths are passed already resolved and server-relative, as the skill expects.",
+                  "runAfter": {},
+                  "inputs": "@{concat('Convert this Position Description into the PD template.', decodeUriComponent('%0A%0A'), 'siteUrl: ', outputs('RESOLVE_effective')['siteUrl'], decodeUriComponent('%0A'), 'templatePath: ', outputs('RESOLVE_effective')['templateFolderPath'], decodeUriComponent('%0A'), 'sourcePath: ', items('FOR_EACH_candidate')['positionFolderPath'])}"
+                },
+                "INVOKE_agent": {
+                  "type": "OpenApiConnection",
+                  "description": "THE ONLY METERED OPERATION IN THIS FLOW. Invokes the existing PD Conversion Assistant agent - reused by schema name, not recreated. Mechanism (shared_agentnode / InvokeAgent / body/agentId + body/prompt) is taken from the reference export rather than guessed.",
+                  "runAfter": {
+                    "COMPOSE_prompt": [
+                      "Succeeded"
+                    ]
+                  },
+                  "inputs": {
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_agentnode",
+                      "connectionName": "shared_agentnode",
+                      "operationId": "InvokeAgent"
+                    },
+                    "parameters": {
+                      "body/agentId": "@outputs('RESOLVE_effective')['agentId']",
+                      "body/prompt": "@outputs('COMPOSE_prompt')"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "COUNT_agent_call": {
+                  "type": "IncrementVariable",
+                  "description": "Count the call whether or not it succeeded. A failed invocation may still have consumed capacity, so counting only successes would under-report cost.",
+                  "runAfter": {
+                    "INVOKE_agent": [
+                      "Succeeded",
+                      "Failed",
+                      "TimedOut"
+                    ]
+                  },
+                  "inputs": {
+                    "name": "agentCallCount",
+                    "value": 1
+                  }
+                },
+                "CAPTURE_agent_response": {
+                  "type": "Compose",
+                  "description": "OBSERVABLE STAGE 3. The agent's reply, verbatim and unparsed, before any interpretation. If parsing later fails this is still in the run history, which is the difference between a diagnosable failure and a mystery.",
+                  "runAfter": {
+                    "COUNT_agent_call": [
+                      "Succeeded"
+                    ]
+                  },
+                  "inputs": "@coalesce(body('INVOKE_agent'), '')"
+                },
+                "EXTRACT_reply_text": {
+                  "type": "Compose",
+                  "description": "Reduce the connector envelope to the reply text. The InvokeAgent response shape is one of the few things the export does not pin down, so both a wrapped and a bare reply are handled.",
+                  "runAfter": {
+                    "CAPTURE_agent_response": [
+                      "Succeeded"
+                    ]
+                  },
+                  "inputs": "@{if(equals(string(outputs('CAPTURE_agent_response')), ''), '', coalesce(string(coalesce(json(string(outputs('CAPTURE_agent_response')))?['text'], '')), string(outputs('CAPTURE_agent_response'))))}"
+                },
+                "PARSE_agent_report": {
+                  "type": "ParseJson",
+                  "description": "Parse the skill's run report. Schema mirrors cmd_report's return value in pd_tools.py; `status` and `reason` are the fields the harness branches on.",
+                  "runAfter": {
+                    "EXTRACT_reply_text": [
+                      "Succeeded"
+                    ]
+                  },
+                  "inputs": {
+                    "content": "@outputs('EXTRACT_reply_text')",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "sourceFile": {
+                          "type": "string"
+                        },
+                        "sourceChosenBecause": {
+                          "type": "string"
+                        },
+                        "notes": {
+                          "type": "string"
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "template": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "destinationFolderPath": {
+                                "type": "string"
+                              },
+                              "outputFileName": {
+                                "type": "string"
+                              },
+                              "bytesSent": {},
+                              "bytesStored": {},
+                              "verdict": {
+                                "type": "string"
+                              },
+                              "verdictNote": {
+                                "type": "string"
+                              },
+                              "missingFields": {
+                                "type": "array"
+                              },
+                              "removed": {
+                                "type": "array"
+                              },
+                              "highlightCleared": {},
+                              "archivedAs": {
+                                "type": "array"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "HANDLE_reply": {
+                  "type": "If",
+                  "description": "Did the reply parse as the contracted JSON object?",
+                  "runAfter": {
+                    "PARSE_agent_report": [
+                      "Succeeded",
+                      "Failed"
+                    ]
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "equals": [
+                          "@result('PARSE_agent_report')[0]['status']",
+                          "Succeeded"
+                        ]
+                      }
+                    ]
+                  },
+                  "actions": {
+                    "CLASSIFY_outcome": {
+                      "type": "Compose",
+                      "description": "Classify the reply. UNPARSEABLE is its own outcome rather than being folded into FAILED: a conversion that failed and a reply the harness could not read have different causes and different fixes.",
+                      "runAfter": {},
+                      "inputs": "@{if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'OK'), 'OK', if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'SKIPPED'), 'SKIPPED', if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'FAILED'), 'FAILED', 'UNPARSEABLE')))}"
+                    },
+                    "RECORD_result": {
+                      "type": "AppendToArrayVariable",
+                      "description": "OBSERVABLE STAGE 4. One record per document, carrying the prompt that was sent alongside what came back - so a single record answers the whole traceability question without cross-referencing actions.",
+                      "runAfter": {
+                        "CLASSIFY_outcome": [
+                          "Succeeded"
+                        ]
+                      },
+                      "inputs": {
+                        "name": "results",
+                        "value": {
+                          "positionFolderPath": "@items('FOR_EACH_candidate')['positionFolderPath']",
+                          "positionFolderName": "@items('FOR_EACH_candidate')['positionFolderName']",
+                          "outcome": "@outputs('CLASSIFY_outcome')",
+                          "status": "@coalesce(body('PARSE_agent_report')?['status'], '')",
+                          "reason": "@coalesce(body('PARSE_agent_report')?['reason'], '')",
+                          "sourceFile": "@coalesce(body('PARSE_agent_report')?['sourceFile'], '')",
+                          "sourceChosenBecause": "@coalesce(body('PARSE_agent_report')?['sourceChosenBecause'], '')",
+                          "notes": "@coalesce(body('PARSE_agent_report')?['notes'], '')",
+                          "outputs": "@coalesce(body('PARSE_agent_report')?['outputs'], json('[]'))",
+                          "promptSent": "@outputs('COMPOSE_prompt')",
+                          "completedAt": "@{utcNow()}"
+                        }
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "RECORD_unparseable": {
+                        "type": "AppendToArrayVariable",
+                        "description": "A reply that does not parse is recorded as its own outcome with the raw text attached, rather than failing the run with no evidence. `reason` is deliberately outside the skill's closed set: it is the harness's own failure, not the skill's.",
+                        "runAfter": {},
+                        "inputs": {
+                          "name": "results",
+                          "value": {
+                            "positionFolderPath": "@items('FOR_EACH_candidate')['positionFolderPath']",
+                            "positionFolderName": "@items('FOR_EACH_candidate')['positionFolderName']",
+                            "outcome": "UNPARSEABLE",
+                            "status": "",
+                            "reason": "harness-could-not-parse-reply",
+                            "notes": "@{concat('The agent reply was not the single JSON object the skill contract specifies. Raw reply: ', substring(string(outputs('CAPTURE_agent_response')), 0, min(2000, length(string(outputs('CAPTURE_agent_response'))))))}",
+                            "outputs": "@json('[]')",
+                            "promptSent": "@outputs('COMPOSE_prompt')",
+                            "completedAt": "@{utcNow()}"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        },
+        "SUMMARY": {
+          "type": "Compose",
+          "description": "OBSERVABLE STAGE 5. The run summary. `agentCallCount` is the cost figure; `skipped` is kept separate from `failed` because another-format-preferred is a normal outcome and counting it as a failure would misreport a healthy run.",
+          "runAfter": {
+            "EXECUTE_check_dry_run": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "runId": "@{variables('runId')}",
+            "runLabel": "@outputs('RESOLVE_effective')['runLabel']",
+            "completedAt": "@{utcNow()}",
+            "dryRun": "@outputs('RESOLVE_effective')['dryRun']",
+            "agentId": "@outputs('RESOLVE_effective')['agentId']",
+            "foldersScanned": "@variables('foldersScanned')",
+            "walkTruncated": "@variables('walkTruncated')",
+            "positionFoldersFound": "@length(variables('candidates'))",
+            "planned": "@length(outputs('PLAN_selected'))",
+            "agentCallCount": "@variables('agentCallCount')",
+            "succeeded": "@length(filter(variables('results'), equals(item()['outcome'], 'OK')))",
+            "skipped": "@length(filter(variables('results'), equals(item()['outcome'], 'SKIPPED')))",
+            "failed": "@length(filter(variables('results'), equals(item()['outcome'], 'FAILED')))",
+            "unparseable": "@length(filter(variables('results'), equals(item()['outcome'], 'UNPARSEABLE')))",
+            "failureReasons": "@filter(variables('results'), or(equals(item()['outcome'], 'FAILED'), equals(item()['outcome'], 'UNPARSEABLE')))",
+            "results": "@variables('results')",
+            "plan": "@outputs('PLAN')"
+          }
+        },
+        "RESPOND": {
+          "type": "Response",
+          "description": "Return the whole summary to the caller, so an interactive run needs no trip to the run history.",
+          "runAfter": {
+            "SUMMARY": [
+              "Succeeded"
+            ]
+          },
+          "inputs": {
+            "statusCode": 200,
+            "body": "@outputs('SUMMARY')"
+          }
+        },
+        "TERMINATE_by_outcome": {
+          "type": "If",
+          "description": "Terminal status derived from outcomes, never assumed. This is the single most important difference from the reference flow, which always reported success.",
+          "runAfter": {
+            "RESPOND": [
+              "Succeeded"
+            ]
+          },
+          "expression": {
+            "and": [
+              {
+                "greater": [
+                  "@add(outputs('SUMMARY')['failed'], outputs('SUMMARY')['unparseable'])",
+                  0
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "TERMINATE_failed": {
+              "type": "Terminate",
+              "description": "At least one conversion failed. Say so.",
+              "runAfter": {},
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "ConversionFailures",
+                  "message": "@{concat(string(outputs('SUMMARY')['failed']), ' conversion(s) failed and ', string(outputs('SUMMARY')['unparseable']), ' reply/replies could not be parsed, out of ', string(outputs('SUMMARY')['agentCallCount']), ' agent call(s). See SUMMARY.failureReasons.')}"
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "TERMINATE_succeeded": {
+                "type": "Terminate",
+                "description": "Every attempted conversion succeeded or was legitimately skipped.",
+                "runAfter": {},
+                "inputs": {
+                  "runStatus": "Succeeded"
+                }
+              }
+            }
+          }
+        }
+      },
+      "outputs": {},
+      "description": "PD Conversion Harness. Walks position folders using direct-children enumeration only, plans the work, and invokes the existing PD Conversion Assistant agent once per position folder - then reads what the agent returned and reports it. Every stage is observable: the plan, the prompt sent, the raw reply, the parsed outcome, the summary."
+    },
+    "schemaVersion": "1.0.0.0"
+  }
+}

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml version="9.2.26081.168" SolutionPackageVersion="9.2" languagecode="1033" generatedBy="PDConversionHarness" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <!--
+    PD Conversion Harness - solution manifest.
+
+    Root components deliberately list ONLY the harness workflow.
+
+    The agent (cree1_pdconversionassistant_08zNQw) is NOT a root component here,
+    exactly as it is not a root component of the reference solution. It is an
+    existing environment resource that this solution INVOKES by schema name. Adding
+    it here would take ownership of an agent owned by another solution, forking its
+    instructions, its five tools and the pd-ad-conversion skill.
+
+    The same reasoning excludes the agent-owned connection references
+    (cree1_*.cr.shared_sharepointonline, .shared_workiqsharepoint, .shared_a365wordmcp)
+    and the bot components. They travel with the agent, not with the harness.
+
+    scripts/validate_harness.py asserts that none of them appear here.
+  -->
+  <SolutionManifest>
+    <UniqueName>pdconversionharness</UniqueName>
+    <LocalizedNames>
+      <LocalizedName description="PD Conversion Harness" languagecode="1033" />
+    </LocalizedNames>
+    <Descriptions>
+      <Description description="Harness-ready orchestration for PD/AD document conversion. Walks position folders, plans the work, invokes the existing PD Conversion Assistant agent once per position, and records what the agent returned." languagecode="1033" />
+    </Descriptions>
+    <Version>1.0.0.0</Version>
+    <Managed>2</Managed>
+    <Publisher>
+      <UniqueName>pdharness</UniqueName>
+      <LocalizedNames>
+        <LocalizedName description="PD Conversion Harness" languagecode="1033" />
+      </LocalizedNames>
+      <Descriptions>
+        <Description description="Publisher for the PD conversion harness. Deliberately not the CDS Default Publisher used by the reference export." languagecode="1033" />
+      </Descriptions>
+      <EMailAddress xsi:nil="true"></EMailAddress>
+      <SupportingWebsiteUrl xsi:nil="true"></SupportingWebsiteUrl>
+      <CustomizationPrefix>pdh</CustomizationPrefix>
+      <CustomizationOptionValuePrefix>72410</CustomizationOptionValuePrefix>
+      <Addresses></Addresses>
+    </Publisher>
+    <RootComponents>
+      <!-- type 29 = Workflow. The harness flow, and nothing else. -->
+      <RootComponent type="29" id="{a7c41f52-8e3b-4d16-9f20-6b8e2d4c71a5}" behavior="0" />
+      <!-- type 380 = Environment variable definition. -->
+      <RootComponent type="380" schemaName="pdh_SiteUrl" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_LibraryUrlName" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_SourceRootPath" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_TemplateFolderPath" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_ExcludedFolderNames" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_SourceExtensions" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_MaxDocuments" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_DryRun" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_MaxFolderDepth" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_MaxFoldersScanned" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_AgentId" behavior="0" />
+      <RootComponent type="380" schemaName="pdh_RunLabel" behavior="0" />
+      <!-- type 10099 = Connection reference. Exactly two. -->
+      <RootComponent type="10099" schemaName="pdh_sharedsharepointonline" behavior="0" />
+      <RootComponent type="10099" schemaName="pdh_sharedagentnode" behavior="0" />
+    </RootComponents>
+    <MissingDependencies>
+      <!--
+        The agent is an intentional external dependency. Recording it here makes the
+        reuse explicit at import time rather than discovering it when InvokeAgent
+        fails at runtime against an environment where the agent is absent.
+      -->
+      <MissingDependency>
+        <Required type="10056" schemaName="cree1_pdconversionassistant_08zNQw" displayName="PD Conversion Assistant" solution="pdconversionassistant" />
+        <Dependent type="29" displayName="PD Conversion Harness" />
+      </MissingDependency>
+    </MissingDependencies>
+  </SolutionManifest>
+</ImportExportXml>
