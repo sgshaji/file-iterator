@@ -837,7 +837,7 @@ def build_execution_actions():
             "if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'FAILED'), 'FAILED', "
             "'UNPARSEABLE')))}"
         ),
-        {"PARSE_agent_report": ["Succeeded"]},
+        {},
         (
             "Classify the reply. UNPARSEABLE is its own outcome rather than being "
             "folded into FAILED: a conversion that failed and a reply the harness "

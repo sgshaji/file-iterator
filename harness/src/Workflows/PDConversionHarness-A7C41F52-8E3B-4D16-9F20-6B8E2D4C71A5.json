@@ -810,11 +810,7 @@
                     "CLASSIFY_outcome": {
                       "type": "Compose",
                       "description": "Classify the reply. UNPARSEABLE is its own outcome rather than being folded into FAILED: a conversion that failed and a reply the harness could not read have different causes and different fixes.",
-                      "runAfter": {
-                        "PARSE_agent_report": [
-                          "Succeeded"
-                        ]
-                      },
+                      "runAfter": {},
                       "inputs": "@{if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'OK'), 'OK', if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'SKIPPED'), 'SKIPPED', if(equals(coalesce(body('PARSE_agent_report')?['status'], ''), 'FAILED'), 'FAILED', 'UNPARSEABLE')))}"
                     },
                     "RECORD_result": {

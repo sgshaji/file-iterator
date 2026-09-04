@@ -8,6 +8,8 @@ on:
   pull_request:
     paths:
       - 'solution/**'
+      - 'harness/**'
+      - 'reference-solution/**'
       - 'provisioning/**'
       - 'scripts/**'
       - '.github/workflows/validate.yml'
@@ -15,6 +17,8 @@ on:
     branches: [main]
     paths:
       - 'solution/**'
+      - 'harness/**'
+      - 'reference-solution/**'
       - 'provisioning/**'
       - 'scripts/**'
       - '.github/workflows/validate.yml'
@@ -29,7 +33,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
+        # Full history so the reference-solution guard can diff against the
+        # base branch. A shallow checkout makes that check skip silently.
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,6 +52,21 @@ jobs:
 
       - name: Validate flow definitions, columns and configuration
         run: python3 scripts/validate_solution.py
+
+      # The reference export is evidence of how the deployed system behaves.
+      # Editing it destroys the ability to claim the harness matches production,
+      # and being a binary zip, a diff cannot show what changed.
+      - name: Verify the reference solution is untouched
+        run: python3 scripts/check_reference_untouched.py origin/${{ github.base_ref || 'main' }}
+
+      - name: Verify harness flow matches its generator
+        run: python3 scripts/generate_harness_flow.py --check
+
+      # Regression suite against the reference flow's real defects: the empty
+      # exclusion branches, RecursiveAll enumeration, the discarded agent
+      # response and the unconditional Succeeded.
+      - name: Validate harness
+        run: python3 scripts/validate_harness.py
 
   pack:
     name: Pack Power Platform solution
@@ -71,4 +94,18 @@ jobs:
         with:
           name: solution-unmanaged
           path: out/FileIteratorTemplateRegeneration.zip
+          if-no-files-found: error
+
+      - name: Pack harness (unmanaged)
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: harness/src
+          solution-file: out/PDConversionHarness.zip
+          solution-type: Unmanaged
+
+      - name: Upload harness artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-unmanaged
+          path: out/PDConversionHarness.zip
           if-no-files-found: error
