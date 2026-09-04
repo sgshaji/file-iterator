@@ -55,6 +55,7 @@
         { "name": "RunId", "type": "Text", "required": true, "indexed": true, "description": "Groups items into a run. Queried by Flow B every cycle, so it must be indexed." },
         { "name": "SourceUniqueId", "type": "Text", "required": true, "indexed": true, "description": "SharePoint GUID of the source document. Idempotency key." },
         { "name": "SourceUrl", "type": "Note", "required": true, "description": "Server-relative path of the source document." },
+        { "name": "SourceSizeBytes", "type": "Number", "required": false, "defaultValue": "0", "description": "Size of the source document, copied from the index by Flow A. Flow B's output validation compares generated size against this to detect truncation and runaway generation, so it must be populated at plan time." },
         { "name": "TargetUrl", "type": "Note", "required": true, "description": "Server-relative path where the regenerated output is written." },
         { "name": "ArchiveUrl", "type": "Note", "required": false, "description": "Where the previous output was archived before overwriting. Flow D rollback depends entirely on this." },
         { "name": "TemplateName", "type": "Text", "required": true },

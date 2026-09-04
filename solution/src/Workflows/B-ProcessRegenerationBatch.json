@@ -1,0 +1,477 @@
+{
+  "$comment": "FLOW B - Process Regeneration Batch. The ONLY flow that invokes the agent and the ONLY flow that writes business documents. Claims a bounded batch, and per document: read, invoke agent, VALIDATE, archive the existing output, write the new output, mark the outcome. That order is not negotiable. See docs/Template-Regeneration-Solution-Design.md section 6.",
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
+        "api": { "name": "shared_sharepointonline" }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": { "defaultValue": {}, "type": "Object" },
+        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+      },
+      "triggers": {
+        "Recurrence": {
+          "type": "Recurrence",
+          "recurrence": { "frequency": "Minute", "interval": 15 },
+          "description": "Interval should be set from fi_ScheduleIntervalMinutes. Together with fi_BatchSize this is the throttle for both the 600 calls/min connector limit and agent capacity consumption. A queue of 50 and a queue of 5,000 behave identically; the latter simply takes more cycles."
+        }
+      },
+      "actions": {
+        "Reap_stale_claims": {
+          "runAfter": {},
+          "type": "Scope",
+          "description": "Items left InProgress beyond StaleClaimMinutes belong to a run that died. Without reaping, a crashed batch strands its claimed items forever.",
+          "actions": {
+            "Get_stale_items": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "GetItems",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                  "$filter": "Status eq 'InProgress' and ClaimedAt lt datetime'@{addMinutes(utcNow(), mul(-1, int(parameters('fi_StaleClaimMinutes (fi_StaleClaimMinutes)'))), 'yyyy-MM-ddTHH:mm:ssZ')}'",
+                  "$top": 100
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "For_each_stale_item": {
+              "runAfter": { "Get_stale_items": ["Succeeded"] },
+              "type": "Foreach",
+              "foreach": "@body('Get_stale_items')?['value']",
+              "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+              "actions": {
+                "Release_stale_claim": {
+                  "runAfter": {},
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                      "id": "@items('For_each_stale_item')?['ID']",
+                      "item/Status/Value": "Pending",
+                      "item/ClaimedBy": "",
+                      "item/ErrorMessage": "Claim expired and was released for retry."
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "Get_active_run": {
+          "runAfter": { "Reap_stale_claims": ["Succeeded", "Failed"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "$filter": "(Status eq 'Approved' or Status eq 'Running') and IsDryRun eq 0",
+              "$orderby": "Created asc",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "Only an approved, non-dry-run run is executable. One run at a time, oldest first - concurrent runs would compete for the same agent capacity and make cost unpredictable."
+        },
+        "Exit_if_no_active_run": {
+          "runAfter": { "Get_active_run": ["Succeeded"] },
+          "type": "If",
+          "expression": { "equals": [ "@length(body('Get_active_run')?['value'])", 0 ] },
+          "actions": {
+            "Terminate_idle": {
+              "runAfter": {},
+              "type": "Terminate",
+              "inputs": { "runStatus": "Succeeded" }
+            }
+          },
+          "else": { "actions": {} }
+        },
+        "Init_ActiveRunId": {
+          "runAfter": { "Exit_if_no_active_run": ["Succeeded"] },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              { "name": "ActiveRunId", "type": "string", "value": "@{first(body('Get_active_run')?['value'])?['RunId']}" }
+            ]
+          }
+        },
+        "Init_AgentCalls": {
+          "runAfter": { "Init_ActiveRunId": ["Succeeded"] },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              { "name": "AgentCallsThisBatch", "type": "integer", "value": 0 }
+            ]
+          },
+          "description": "Rolled up into the run's AgentCallCount, the headline cost metric reported by Flow C."
+        },
+        "Init_Backpressure": {
+          "runAfter": { "Init_AgentCalls": ["Succeeded"] },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              { "name": "BackpressureHit", "type": "boolean", "value": false }
+            ]
+          }
+        },
+        "Mark_run_running": {
+          "runAfter": { "Init_Backpressure": ["Succeeded"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "PatchItem",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "id": "@first(body('Get_active_run')?['value'])?['ID']",
+              "item/Status/Value": "Running"
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Claim_batch": {
+          "runAfter": { "Mark_run_running": ["Succeeded"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+              "$filter": "RunId eq '@{variables('ActiveRunId')}' and Status eq 'Pending'",
+              "$orderby": "ID asc",
+              "$top": "@parameters('fi_BatchSize (fi_BatchSize)')"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "RunId and Status are indexed columns. Without that this query degrades as run history accumulates - the same threshold problem this solution exists to avoid."
+        },
+        "For_each_work_item": {
+          "runAfter": { "Claim_batch": ["Succeeded"] },
+          "type": "Foreach",
+          "foreach": "@body('Claim_batch')?['value']",
+          "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+          "description": "Sequential by default. Concurrency multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic; enable fi_EnableConcurrency only after measurement.",
+          "actions": {
+            "Skip_if_backpressure": {
+              "runAfter": {},
+              "type": "If",
+              "expression": { "equals": [ "@variables('BackpressureHit')", true ] },
+              "description": "BACKPRESSURE. Once a throttling or capacity error is seen, stop claiming further work and let the next cycle retry. Retrying hard against a capacity limit converts a delay into a cost.",
+              "actions": {},
+              "else": {
+                "actions": {
+                  "Claim_item": {
+                    "runAfter": {},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                        "id": "@items('For_each_work_item')?['ID']",
+                        "item/Status/Value": "InProgress",
+                        "item/ClaimedBy": "@{workflow()?['run']?['name']}",
+                        "item/ClaimedAt": "@utcNow()",
+                        "item/AttemptCount": "@add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1)"
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    },
+                    "description": "Claim BEFORE processing. Without this, two overlapping batches regenerate the same document twice - wrong, and double the cost."
+                  },
+                  "Process_document": {
+                    "runAfter": { "Claim_item": ["Succeeded"] },
+                    "type": "Scope",
+                    "description": "Wrapped in a scope so one document's failure never aborts the batch. A single malformed source must not stop 300 others.",
+                    "actions": {
+                      "STEP_1_Read_source_document": {
+                        "runAfter": {},
+                        "type": "OpenApiConnection",
+                        "inputs": {
+                          "host": {
+                            "connectionName": "shared_sharepointonline",
+                            "operationId": "GetFileContentByPath",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                          },
+                          "parameters": {
+                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                            "path": "@items('For_each_work_item')?['SourceUrl']",
+                            "inferContentType": false
+                          },
+                          "authentication": "@parameters('$authentication')"
+                        }
+                      },
+                      "STEP_2_Invoke_agent": {
+                        "runAfter": { "STEP_1_Read_source_document": ["Succeeded"] },
+                        "type": "Workflow",
+                        "inputs": {
+                          "host": {
+                            "workflowReferenceName": "@parameters('fi_AgentEndpointName (fi_AgentEndpointName)')"
+                          },
+                          "body": {
+                            "sourceUrl": "@items('For_each_work_item')?['SourceUrl']",
+                            "sourceContent": "@body('STEP_1_Read_source_document')",
+                            "templateName": "@items('For_each_work_item')?['TemplateName']",
+                            "templateFingerprint": "@items('For_each_work_item')?['TemplateFingerprint']",
+                            "runId": "@variables('ActiveRunId')",
+                            "outputContract": "Return a strictly structured object: generatedContent (base64 docx), status ('Generated' or 'Refused'), and reason. Do not return prose."
+                          }
+                        },
+                        "description": "THE ONLY METERED OPERATION IN THIS SOLUTION. Replace the Workflow action with the Copilot Studio agent action once the agent is published; the surrounding contract does not change. The agent must return a deterministic structure, not prose, so the response can be validated before anything is written. IF MEASURED WORST-CASE LATENCY APPROACHES THE ACTION REQUEST TIMEOUT, this synchronous shape is unsafe and must move to an asynchronous handoff - the agent writes to staging and updates the work item, and a separate pass validates and writes. The persisted queue already supports that; it is why state lives in a list."
+                      },
+                      "Count_agent_call": {
+                        "runAfter": { "STEP_2_Invoke_agent": ["Succeeded", "Failed", "TimedOut"] },
+                        "type": "IncrementVariable",
+                        "inputs": { "name": "AgentCallsThisBatch", "value": 1 },
+                        "description": "Counted whether or not it succeeded - a failed call still consumes capacity, and the cost metric must reflect that."
+                      },
+                      "STEP_3_Validate_response": {
+                        "runAfter": { "Count_agent_call": ["Succeeded"] },
+                        "type": "If",
+                        "expression": {
+                          "and": [
+                            { "equals": [ "@equals(coalesce(body('STEP_2_Invoke_agent')?['status'], ''), 'Generated')", true ] },
+                            { "greater": [ "@length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))", 0 ] },
+                            {
+                              "greaterOrEquals": [
+                                "@div(float(length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))), max(float(coalesce(items('For_each_work_item')?['SourceSizeBytes'], 1)), 1.0))",
+                                "@float(parameters('fi_MinOutputSizeRatio (fi_MinOutputSizeRatio)'))"
+                              ]
+                            },
+                            {
+                              "lessOrEquals": [
+                                "@div(float(length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))), max(float(coalesce(items('For_each_work_item')?['SourceSizeBytes'], 1)), 1.0))",
+                                "@float(parameters('fi_MaxOutputSizeRatio (fi_MaxOutputSizeRatio)'))"
+                              ]
+                            }
+                          ]
+                        },
+                        "description": "VALIDATE BEFORE WRITING. An unvalidated response must never reach a business document - silent corruption is far worse than a visible failure. Rejects empty output, a refusal status, truncation (too small) and runaway generation (too large).",
+                        "actions": {
+                          "STEP_4_Archive_existing_output": {
+                            "runAfter": {},
+                            "type": "OpenApiConnection",
+                            "inputs": {
+                              "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "CopyFileAsync",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                              },
+                              "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "parameter/source": "@items('For_each_work_item')?['TargetUrl']",
+                                "parameter/destination": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}/@{parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)')}/@{replace(last(split(items('For_each_work_item')?['TargetUrl'], '/')), '.docx', '')}_@{formatDateTime(utcNow(), 'yyyyMMdd-HHmmss')}.docx",
+                                "parameter/overwriteFlag": false
+                              },
+                              "authentication": "@parameters('$authentication')"
+                            },
+                            "runAfterConfiguration": "This step is allowed to fail when no prior output exists - see Continue_when_no_prior_output.",
+                            "description": "ARCHIVE BEFORE OVERWRITING. Costs one file copy. Without it, 'the agent produced rubbish across 400 documents' is a disaster instead of a rollback - and recovering would mean paying for a second full run of agent calls on top of the damage. The timestamp suffix matches the convention already present in the tree."
+                          },
+                          "STEP_5_Write_new_output": {
+                            "runAfter": { "STEP_4_Archive_existing_output": ["Succeeded", "Failed"] },
+                            "type": "OpenApiConnection",
+                            "inputs": {
+                              "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "CreateFile",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                              },
+                              "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "folderPath": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}",
+                                "name": "@{last(split(items('For_each_work_item')?['TargetUrl'], '/'))}",
+                                "body": "@base64ToBinary(body('STEP_2_Invoke_agent')?['generatedContent'])"
+                              },
+                              "authentication": "@parameters('$authentication')"
+                            },
+                            "description": "Runs whether or not the archive step succeeded, because a first-time generation has no prior output to archive. If a prior output DID exist, the archive step will have succeeded."
+                          },
+                          "STEP_6_Stamp_output_in_index": {
+                            "runAfter": { "STEP_5_Write_new_output": ["Succeeded"] },
+                            "type": "OpenApiConnection",
+                            "inputs": {
+                              "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "PostItem",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                              },
+                              "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                                "item/Title": "@{last(split(items('For_each_work_item')?['TargetUrl'], '/'))}",
+                                "item/UniqueId": "@{body('STEP_5_Write_new_output')?['Id']}",
+                                "item/FileName": "@{last(split(items('For_each_work_item')?['TargetUrl'], '/'))}",
+                                "item/ServerRelativeUrl": "@items('For_each_work_item')?['TargetUrl']",
+                                "item/ParentFolderUrl": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}",
+                                "item/Extension": ".docx",
+                                "item/DocumentRole/Value": "Output",
+                                "item/TemplateName": "@items('For_each_work_item')?['TemplateName']",
+                                "item/TemplateFingerprint": "@items('For_each_work_item')?['TemplateFingerprint']",
+                                "item/IndexedAt": "@utcNow()"
+                              },
+                              "authentication": "@parameters('$authentication')"
+                            },
+                            "description": "Stamping the template fingerprint on the output is what makes COST FILTER F3 work on the next run. Without this the solution would regenerate everything every time and the whole cost model collapses."
+                          },
+                          "STEP_7_Mark_succeeded": {
+                            "runAfter": { "STEP_6_Stamp_output_in_index": ["Succeeded"] },
+                            "type": "OpenApiConnection",
+                            "inputs": {
+                              "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "PatchItem",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                              },
+                              "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                "id": "@items('For_each_work_item')?['ID']",
+                                "item/Status/Value": "Succeeded",
+                                "item/ArchiveUrl": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}/@{parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)')}/@{replace(last(split(items('For_each_work_item')?['TargetUrl'], '/')), '.docx', '')}_@{formatDateTime(utcNow(), 'yyyyMMdd-HHmmss')}.docx",
+                                "item/CompletedAt": "@utcNow()",
+                                "item/ErrorMessage": ""
+                              },
+                              "authentication": "@parameters('$authentication')"
+                            },
+                            "description": "ArchiveUrl is recorded here because Flow D rollback depends entirely on it."
+                          }
+                        },
+                        "else": {
+                          "actions": {
+                            "Mark_validation_failed": {
+                              "runAfter": {},
+                              "type": "OpenApiConnection",
+                              "inputs": {
+                                "host": {
+                                  "connectionName": "shared_sharepointonline",
+                                  "operationId": "PatchItem",
+                                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                },
+                                "parameters": {
+                                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                  "id": "@items('For_each_work_item')?['ID']",
+                                  "item/Status/Value": "@{if(greaterOrEquals(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
+                                  "item/ValidationResult": "Agent response rejected. status=@{coalesce(body('STEP_2_Invoke_agent')?['status'], 'none')} reason=@{coalesce(body('STEP_2_Invoke_agent')?['reason'], 'none')} length=@{length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))}",
+                                  "item/CompletedAt": "@utcNow()"
+                                },
+                                "authentication": "@parameters('$authentication')"
+                              },
+                              "description": "THE EXISTING OUTPUT IS LEFT UNTOUCHED. Retried until MaxAttempts, then parked as Failed for human review - unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "Handle_processing_failure": {
+                    "runAfter": { "Process_document": ["Failed", "TimedOut"] },
+                    "type": "Scope",
+                    "actions": {
+                      "Detect_backpressure": {
+                        "runAfter": {},
+                        "type": "If",
+                        "expression": {
+                          "or": [
+                            { "contains": [ "@toLower(string(result('Process_document')))", "throttl" ] },
+                            { "contains": [ "@toLower(string(result('Process_document')))", "429" ] },
+                            { "contains": [ "@toLower(string(result('Process_document')))", "capacity" ] },
+                            { "contains": [ "@toLower(string(result('Process_document')))", "quota" ] }
+                          ]
+                        },
+                        "actions": {
+                          "Set_backpressure": {
+                            "runAfter": {},
+                            "type": "SetVariable",
+                            "inputs": { "name": "BackpressureHit", "value": true }
+                          }
+                        },
+                        "else": { "actions": {} }
+                      },
+                      "Mark_item_failed_or_retry": {
+                        "runAfter": { "Detect_backpressure": ["Succeeded"] },
+                        "type": "OpenApiConnection",
+                        "inputs": {
+                          "host": {
+                            "connectionName": "shared_sharepointonline",
+                            "operationId": "PatchItem",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                          },
+                          "parameters": {
+                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                            "id": "@items('For_each_work_item')?['ID']",
+                            "item/Status/Value": "@{if(or(variables('BackpressureHit'), less(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), int(parameters('fi_MaxAttempts (fi_MaxAttempts)')))), 'Pending', 'Failed')}",
+                            "item/ErrorMessage": "@{take(string(result('Process_document')), 4000)}",
+                            "item/CompletedAt": "@utcNow()"
+                          },
+                          "authentication": "@parameters('$authentication')"
+                        },
+                        "description": "A backpressure failure returns the item to Pending without consuming its retry budget - it was not the document's fault."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "Roll_up_agent_call_count": {
+          "runAfter": { "For_each_work_item": ["Succeeded", "Failed"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "PatchItem",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "id": "@first(body('Get_active_run')?['value'])?['ID']",
+              "item/AgentCallCount": "@add(int(coalesce(first(body('Get_active_run')?['value'])?['AgentCallCount'], 0)), variables('AgentCallsThisBatch'))"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "HEADLINE COST METRIC. Flow C reports this against PlannedCount. If agent calls approach the full document count on every run, the cost filters in Flow A are not working, and that - not the flow logic - is where to look."
+        }
+      },
+      "outputs": {}
+    }
+  },
+  "schemaVersion": "1.0.0.0"
+}
