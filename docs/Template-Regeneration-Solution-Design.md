@@ -20,7 +20,7 @@
 6. [Flow B — Process Regeneration Batch](#6-flow-b--process-regeneration-batch)
 7. [Flow C — Finalise Regeneration Run](#7-flow-c--finalise-regeneration-run)
 8. [Flow D — Rollback Regeneration Run](#8-flow-d--rollback-regeneration-run)
-9. [Flow E — Index Backfill (folder walk)](#9-flow-e--index-backfill-folder-walk)
+9. [Flow E — Index Backfill (folder walk, E1 + E2)](#9-flow-e--index-backfill-folder-walk-e1--e2)
 10. [Flow F — Index Delta](#10-flow-f--index-delta)
 11. [Cost Model](#11-cost-model)
 12. [Failure Modes and Controls](#12-failure-modes-and-controls)
@@ -126,7 +126,7 @@ Six flows, three lists. All standard connector.
 
 Flow A must answer "which documents does this template affect?". Answering it by walking the tree would incur the full enumeration cost (C1) on **every** template change. Instead:
 
-- **Flow E** walks the tree once, using the method verified in the investigation report §9 — direct children only, recursion supplied by the flow.
+- **Flow E** (split into E1 start + E2 worker) walks the tree once, using the method verified in the investigation report §9 — direct children only, recursion supplied by the flow.
 - **Flow F** keeps the index current using the folder-scoped *When a file is created or modified (properties only)* trigger, which is unaffected by library size.
 - **Flow A** then answers the question with a single indexed list query.
 
@@ -320,11 +320,20 @@ Rarely used, but it is the reason the archive step exists. Without it, recoverin
 
 ---
 
-## 9. Flow E — Index Backfill (folder walk)
+## 9. Flow E — Index Backfill (folder walk, E1 + E2)
 
 **Trigger:** manual or scheduled reconciliation, off-hours.
 
 Implements the method verified in the investigation report §9, with the improvements identified in review.
+
+Flow E is built as **two flows**, because chunking (I4 below) requires a run to end and a successor to begin:
+
+| Flow | File | Responsibility |
+|---|---|---|
+| **E1 — Start Index Backfill** | `E1-StartIndexBackfill.json` | Manually triggered. Refuses to start if a walk is already in flight, then seeds the frontier with the root folder and starts E2. Runs once per backfill. |
+| **E2 — Index Backfill Worker** | `E2-IndexBackfillWorker.json` | Claims up to `WalkFolderChunkSize` pending frontier rows, enumerates each folder's direct children, upserts index rows, enqueues child folders, then either re-invokes itself or completes the walk. Runs many times per backfill. |
+
+The split is what keeps a walk of any tree size inside the run duration limit: no single run does unbounded work, and a failed chunk resumes from the persisted frontier rather than restarting the walk.
 
 ### 9.1 Method
 
@@ -365,7 +374,7 @@ This is what makes P4 work: the walk runs rarely, the trigger keeps the index cu
 | Cost | Driver | Control |
 |---|---|---|
 | **Agent invocations** | documents × runs | Filters F1/F2/F3; `MaxDocumentsPerRun`; validate-before-write; bounded retries; dry run first |
-| SharePoint API calls | folders + documents | Index once (E), event-driven after (F); batch pacing |
+| SharePoint API calls | folders + documents | Index once (E1/E2), event-driven after (F); batch pacing |
 | Flow runs | batch count | `BatchSize` vs `ScheduleIntervalMinutes` |
 | Storage | archived versions | Retention policy on the archive folder |
 | Licensing | — | Standard connector only, by design (R6) |
@@ -414,7 +423,7 @@ All values are environment variables so behaviour can be tuned, throttled or hal
 | `MaxAttempts` | Number | Retry ceiling per work item |
 | `MaxDocumentsPerRun` | Number | Circuit breaker; above this a second confirmation is required |
 | `StaleClaimMinutes` | Number | `InProgress` timeout before reaping |
-| `WalkFolderChunkSize` | Number | Folders per Flow E run |
+| `WalkFolderChunkSize` | Number | Folders per Flow E2 run |
 | `MinOutputSizeRatio` / `MaxOutputSizeRatio` | Number | Validation size bounds |
 | `DryRun` | Boolean | Plan only; never execute |
 | `EnableConcurrency` | Boolean | Off by default (§6.1) |
@@ -430,7 +439,7 @@ Deliberately ordered so that everything cheap and reversible is proven before an
 | # | Step | Agent cost | Proves |
 |---|---|---|---|
 | 1 | Import solution; provision the three lists; set environment variables | none | Configuration is correct |
-| 2 | Run Flow E backfill on the test tree (`001NH`) | none | Enumeration works end-to-end. **The investigation report §9.6 records that the assembled loop has never been executed as a complete flow — this is the first thing to make green.** |
+| 2 | Run the Flow E1/E2 backfill on the test tree (`001NH`) | none | Enumeration works end-to-end. **The investigation report §9.6 records that the assembled loop has never been executed as a complete flow — this is the first thing to make green.** |
 | 3 | Enable Flow F; modify a file; confirm the index updates | none | Incremental maintenance works |
 | 4 | Run Flow A with `DryRun` on | none | Affected-document resolution and the cost filters produce the expected count **before anything is spent** |
 | 5 | Approve a 5-document pilot; run Flow B | 5 calls | Agent output quality, and measured call latency |

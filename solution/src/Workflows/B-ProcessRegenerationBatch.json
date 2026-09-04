@@ -298,8 +298,7 @@
                               },
                               "authentication": "@parameters('$authentication')"
                             },
-                            "runAfterConfiguration": "This step is allowed to fail when no prior output exists - see Continue_when_no_prior_output.",
-                            "description": "ARCHIVE BEFORE OVERWRITING. Costs one file copy. Without it, 'the agent produced rubbish across 400 documents' is a disaster instead of a rollback - and recovering would mean paying for a second full run of agent calls on top of the damage. The timestamp suffix matches the convention already present in the tree."
+                            "description": "ARCHIVE BEFORE OVERWRITING. This step is allowed to fail when no prior output exists, which is why the next step runs after both Succeeded and Failed. Costs one file copy. Without it, 'the agent produced rubbish across 400 documents' is a disaster instead of a rollback - and recovering would mean paying for a second full run of agent calls on top of the damage. The timestamp suffix matches the convention already present in the tree."
                           },
                           "STEP_5_Write_new_output": {
                             "runAfter": { "STEP_4_Archive_existing_output": ["Succeeded", "Failed"] },
