@@ -50,6 +50,9 @@ jobs:
       - name: Verify deployment settings match environment-variables.json
         run: python3 scripts/generate_deployment_settings.py --check
 
+      - name: Verify solution shell matches source configuration
+        run: python3 scripts/generate_solution_shell.py --check
+
       - name: Validate flow definitions, columns and configuration
         run: python3 scripts/validate_solution.py
 
