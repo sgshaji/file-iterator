@@ -260,7 +260,7 @@
                       "parameters": {
                         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                         "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                        "$filter": "TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status eq 'Failed' and HasAgentManifest eq 1",
+                        "$filter": "TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status eq 'Failed' and (AgentEffectState eq 'ParsedManifest' or AgentEffectState eq 'UnknownSideEffects')",
                         "$top": 1
                       },
                       "authentication": "@parameters('$authentication')"
@@ -396,8 +396,7 @@
                                     "item/PlanningCursorId": 0,
                                     "item/IndexSnapshotRunId": "@first(body('Get_latest_completed_index_walk')?['value'])?['WalkRunId']",
                                     "item/IndexSnapshotItemId": "@first(body('Get_latest_completed_index_walk')?['value'])?['ID']",
-                                    "item/RequestedBy": "@triggerOutputs()?['body/Editor/Email']",
-                                    "item/StartedAt": "@utcNow()"
+                                    "item/RequestedBy": "@triggerOutputs()?['body/Editor/Email']"
                                   },
                                   "authentication": "@parameters('$authentication')"
                                 },

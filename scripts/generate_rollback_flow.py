@@ -62,7 +62,7 @@ ROLLBACK_ACTIONS = json.loads(
       "parameters": {
         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
         "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Succeeded' or Status eq 'Failed') and HasAgentManifest eq 1",
+        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Succeeded' or Status eq 'Failed') and AgentEffectState eq 'ParsedManifest'",
         "$top": 5000
       },
       "authentication": "@parameters('$authentication')"
@@ -318,7 +318,7 @@ ROLLBACK_ACTIONS = json.loads(
       "parameters": {
         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
         "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Succeeded' or Status eq 'Failed') and HasAgentManifest eq 1",
+        "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Succeeded' or Status eq 'Failed') and AgentEffectState eq 'ParsedManifest'",
         "$top": 1
       },
       "authentication": "@parameters('$authentication')"
@@ -425,7 +425,8 @@ _lock_run_actions = {
                 "table": "@parameters('fi_RunListName (fi_RunListName)')",
                 "$filter": (
                     "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' "
-                    "and (Status eq 'Completed' or Status eq 'CompletedWithErrors')"
+                    "and IsDryRun eq 0 and StartedAt ne null and "
+                    "(Status eq 'Completed' or Status eq 'CompletedWithErrors')"
                 ),
                 "$top": 1,
             },
@@ -502,7 +503,7 @@ for _name, _action in ROLLBACK_ACTIONS.items():
                     "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                     "table": "@parameters('fi_RunListName (fi_RunListName)')",
                     "$filter": (
-                        "ID gt @{int(coalesce(first(body('Get_run_to_lock')?['value'])?['ID'], 2147483647))} "
+                        "StartedAt gt datetime'@{formatDateTime(first(body('Get_run_to_lock')?['value'])?['StartedAt'], 'yyyy-MM-ddTHH:mm:ssZ')}' "
                         "and IsDryRun eq 0 and Status ne 'Cancelled' and "
                         "Status ne 'RolledBack'"
                     ),
@@ -537,7 +538,7 @@ _unrecoverable = {
             "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
             "$filter": (
                 "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' "
-                "and Status eq 'Failed' and HasAgentManifest eq 0"
+                "and Status eq 'Failed' and AgentEffectState eq 'UnknownSideEffects'"
             ),
             "$top": 1,
         },
@@ -679,7 +680,7 @@ def worker_text():
                     "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                     "table": "@parameters('fi_RunListName (fi_RunListName)')",
                     "$filter": (
-                        "ID gt @{first(body('Get_rollback_run')?['value'])?['ID']} "
+                        "StartedAt gt datetime'@{formatDateTime(first(body('Get_rollback_run')?['value'])?['StartedAt'], 'yyyy-MM-ddTHH:mm:ssZ')}' "
                         "and IsDryRun eq 0 and Status ne 'Cancelled' and "
                         "Status ne 'RolledBack'"
                     ),
@@ -747,7 +748,7 @@ def worker_text():
                         "RunId eq '@{first(body('Get_rollback_run')?['value'])?['RunId']}' "
                         "and ID gt @{int(coalesce(first(body('Get_rollback_run')?['value'])?['RollbackCursorId'], 0))} "
                         "and (Status eq 'Succeeded' or Status eq 'Failed') "
-                        "and HasAgentManifest eq 1"
+                        "and AgentEffectState eq 'ParsedManifest'"
                     ),
                     "$orderby": "ID asc",
                     "$top": "@parameters('fi_RollbackPageSize (fi_RollbackPageSize)')",
@@ -798,7 +799,7 @@ def worker_text():
                                 "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                                 "$filter": (
                                     "RunId eq '@{first(body('Get_rollback_run')?['value'])?['RunId']}' "
-                                    "and Status eq 'Failed' and HasAgentManifest eq 0"
+                                    "and Status eq 'Failed' and AgentEffectState eq 'UnknownSideEffects'"
                                 ),
                                 "$top": 1,
                             },

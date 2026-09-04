@@ -122,7 +122,7 @@
             </Field>
             <Field ID="{f3e79253-f60e-41d1-beeb-859e4cd8a7f4}" Name="RequestedBy" StaticName="RequestedBy" DisplayName="RequestedBy" Type="Text" Required="FALSE" />
             <Field ID="{bd2db118-c439-432b-9b46-176f8fc62d74}" Name="ApprovedBy" StaticName="ApprovedBy" DisplayName="ApprovedBy" Type="Text" Required="FALSE" />
-            <Field ID="{52fcb882-2fcd-4268-947f-22c0db18accf}" Name="StartedAt" StaticName="StartedAt" DisplayName="StartedAt" Type="DateTime" Required="FALSE" />
+            <Field ID="{52fcb882-2fcd-4268-947f-22c0db18accf}" Name="StartedAt" StaticName="StartedAt" DisplayName="StartedAt" Type="DateTime" Required="FALSE" Indexed="TRUE" Description="Set only when Flow B first starts execution; drives LIFO rollback ordering." />
             <Field ID="{fc806d74-7632-43f0-9567-79a8704a6f3b}" Name="CompletedAt" StaticName="CompletedAt" DisplayName="CompletedAt" Type="DateTime" Required="FALSE" />
             <Field ID="{9854f454-2a5e-43e9-9c1e-34dfd39a3a3b}" Name="SummaryMessage" StaticName="SummaryMessage" DisplayName="SummaryMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Written by Flow C." />
           </pnp:Fields>
@@ -157,8 +157,13 @@
             <Field ID="{e7af76bd-0907-47b5-b629-b828e0be5bab}" Name="ErrorMessage" StaticName="ErrorMessage" DisplayName="ErrorMessage" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" />
             <Field ID="{d6ace370-f382-4714-9903-0ea25e86516a}" Name="ValidationResult" StaticName="ValidationResult" DisplayName="ValidationResult" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Why an agent report was rejected or classified as failed." />
             <Field ID="{9ec0d210-a5d8-45bd-9403-57a2bf3f89fa}" Name="AgentResultJson" StaticName="AgentResultJson" DisplayName="AgentResultJson" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Verbatim parsed agent report, including every output, byte-verification verdict and archived filename. Source of truth for rollback." />
-            <Field ID="{e1463f17-df93-44f3-ad83-fc1b33c61d14}" Name="HasAgentManifest" StaticName="HasAgentManifest" DisplayName="HasAgentManifest" Type="Boolean" Required="FALSE" Indexed="TRUE" Description="True when AgentResultJson contains a parsed report or raw response requiring rollback review. Used instead of filtering the non-filterable Note payload.">
-              <Default>0</Default>
+            <Field ID="{e1463f17-df93-44f3-ad83-fc1b33c61d14}" Name="AgentEffectState" StaticName="AgentEffectState" DisplayName="AgentEffectState" Type="Choice" Required="TRUE" Indexed="TRUE" Description="ParsedManifest is safe for D2 automation; UnknownSideEffects blocks replanning and requires manual recovery.">
+              <CHOICES>
+                <CHOICE>None</CHOICE>
+                <CHOICE>ParsedManifest</CHOICE>
+                <CHOICE>UnknownSideEffects</CHOICE>
+              </CHOICES>
+              <Default>None</Default>
             </Field>
             <Field ID="{0b682bf4-9e8a-4c0d-b47f-357b51a83c3d}" Name="RollbackResultJson" StaticName="RollbackResultJson" DisplayName="RollbackResultJson" Type="Note" Required="FALSE" NumLines="4" RichText="FALSE" Description="Machine-readable record of restored files and rollback failures." />
             <Field ID="{7ab77227-82ec-4ac4-9e9a-c0b1ae28d57d}" Name="ClaimedAt" StaticName="ClaimedAt" DisplayName="ClaimedAt" Type="DateTime" Required="FALSE" Description="Used with StaleClaimMinutes to reap items stranded by a crashed batch." />

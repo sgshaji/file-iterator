@@ -53,7 +53,7 @@
         { "name": "RollbackCursorId", "type": "Number", "required": false, "defaultValue": "0", "description": "Highest side-effect manifest processed by paged rollback." },
         { "name": "RequestedBy", "type": "Text", "required": false },
         { "name": "ApprovedBy", "type": "Text", "required": false },
-        { "name": "StartedAt", "type": "DateTime", "required": false },
+        { "name": "StartedAt", "type": "DateTime", "required": false, "indexed": true, "description": "Set only when Flow B first starts execution; drives LIFO rollback ordering." },
         { "name": "CompletedAt", "type": "DateTime", "required": false },
         { "name": "SummaryMessage", "type": "Note", "required": false, "description": "Written by Flow C." }
       ]
@@ -76,7 +76,7 @@
         { "name": "ErrorMessage", "type": "Note", "required": false },
         { "name": "ValidationResult", "type": "Note", "required": false, "description": "Why an agent report was rejected or classified as failed." },
         { "name": "AgentResultJson", "type": "Note", "required": false, "description": "Verbatim parsed agent report, including every output, byte-verification verdict and archived filename. Source of truth for rollback." },
-        { "name": "HasAgentManifest", "type": "Boolean", "required": false, "indexed": true, "defaultValue": "0", "description": "True when AgentResultJson contains a parsed report or raw response requiring rollback review. Used instead of filtering the non-filterable Note payload." },
+        { "name": "AgentEffectState", "type": "Choice", "required": true, "indexed": true, "choices": ["None", "ParsedManifest", "UnknownSideEffects"], "defaultValue": "None", "description": "ParsedManifest is safe for D2 automation; UnknownSideEffects blocks replanning and requires manual recovery." },
         { "name": "RollbackResultJson", "type": "Note", "required": false, "description": "Machine-readable record of restored files and rollback failures." },
         { "name": "ClaimedAt", "type": "DateTime", "required": false, "description": "Used with StaleClaimMinutes to reap items stranded by a crashed batch." },
         { "name": "ClaimedBy", "type": "Text", "required": false, "description": "Flow run identifier that claimed this item. Prevents double processing." },

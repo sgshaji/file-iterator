@@ -124,6 +124,7 @@ jobs:
           # baked into the solution. Never point a test deployment at the
           # production document library.
           deployment-settings-file: out/deployment-settings.resolved.json
+          use-deployment-settings-file: true
           force-overwrite: true
           run-asynchronously: true
 

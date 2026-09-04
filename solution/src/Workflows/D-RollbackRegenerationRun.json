@@ -99,7 +99,7 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and (Status eq 'Completed' or Status eq 'CompletedWithErrors')",
+              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and IsDryRun eq 0 and StartedAt ne null and (Status eq 'Completed' or Status eq 'CompletedWithErrors')",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"
@@ -121,7 +121,7 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "$filter": "ID gt @{int(coalesce(first(body('Get_run_to_lock')?['value'])?['ID'], 2147483647))} and IsDryRun eq 0 and Status ne 'Cancelled' and Status ne 'RolledBack'",
+              "$filter": "StartedAt gt datetime'@{formatDateTime(first(body('Get_run_to_lock')?['value'])?['StartedAt'], 'yyyy-MM-ddTHH:mm:ssZ')}' and IsDryRun eq 0 and Status ne 'Cancelled' and Status ne 'RolledBack'",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"

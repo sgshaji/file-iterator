@@ -113,7 +113,6 @@ def build_a1():
             "item/IndexSnapshotRunId": "@first(body('Get_latest_completed_index_walk')?['value'])?['WalkRunId']",
             "item/IndexSnapshotItemId": "@first(body('Get_latest_completed_index_walk')?['value'])?['ID']",
             "item/RequestedBy": "@triggerOutputs()?['body/Editor/Email']",
-            "item/StartedAt": "@utcNow()",
         },
         description=(
             "Creates only the durable planning header. A2 pages the index and "
@@ -312,7 +311,7 @@ def build_a1():
             "$filter": (
                 "TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' "
                 "and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' "
-                "and Status eq 'Failed' and HasAgentManifest eq 1"
+                "and Status eq 'Failed' and (AgentEffectState eq 'ParsedManifest' or AgentEffectState eq 'UnknownSideEffects')"
             ),
             "$top": 1,
         },

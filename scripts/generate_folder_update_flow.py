@@ -24,6 +24,9 @@ def generated():
     reconcile = copy.deepcopy(
         source["properties"]["definition"]["actions"]["HANDLE_deleted_folder"]
     )
+    reconcile["expression"]["equals"][0] = (
+        "@triggerOutputs()?['body/{IsFolder}']"
+    )
     reconcile["description"] = (
         "A folder rename or move changes descendant paths without modifying each "
         "file. Queue one complete bounded walk so all descendants are refreshed."

@@ -187,7 +187,7 @@ The work queue. Written by Flow A, claimed and updated by Flow B.
 | `SourceDocumentKey` | Stable folder-GUID + stem identity; survives PDF/DOCX replacement and drives idempotency. |
 | `TemplateName`, `TemplateFingerprint` | Recorded so filter F3 can skip already-current outputs on a re-run |
 | `TemplateUrl` | Exact published template passed to the agent |
-| `AgentResultJson`, `HasAgentManifest` | Immutable output/archive report and filterable manifest flag |
+| `AgentResultJson`, `AgentEffectState` | Immutable report plus `None`, `ParsedManifest` or `UnknownSideEffects` recovery state |
 | `RollbackResultJson` | Restoration result |
 | `Status` | `Pending` \| `InProgress` \| `Succeeded` \| `Failed` \| `Skipped` \| `RolledBack` |
 | `AttemptCount`, `ErrorMessage`, `ValidationResult` | Invocation accounting and diagnosis; no automatic retry |
@@ -258,7 +258,8 @@ Create the `RegenerationRun` row, page and persist one
 `AwaitingApproval`.
 
 A reviewer inspects the run and work items, then sets `ApprovalDecision` to
-`Approved` or `Rejected`. A3 records the editor and changes the run state.
+`Approved` or `Rejected`. Above the configured cap the reviewer must additionally
+set `SecondConfirmation` to `Confirmed`. A3 records the editor and changes the run state.
 **Nothing is written to any business document until a human approves.**
 
 If `DryRun` is set, the flow stops here permanently. The work items exist for inspection and are never executed — this is the free rehearsal described in §14.
@@ -287,7 +288,7 @@ Claiming before processing prevents two overlapping batches from regenerating th
 2  Invoke existing agent     retryPolicy=None; the only metered operation
 3  Parse report              OK / FAILED / SKIPPED, with output manifests
 4  Validate success          every output verdict must be PASS
-5  Persist result            AgentResultJson + HasAgentManifest + terminal status
+5  Persist result            AgentResultJson + AgentEffectState + terminal status
 ```
 
 Inside the deployed skill the non-negotiable order is copy displaced files,

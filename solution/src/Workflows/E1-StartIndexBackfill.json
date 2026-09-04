@@ -57,7 +57,7 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
-              "$filter": "Status eq 'Queued' or Status eq 'Running' or Status eq 'Reconciling'",
+              "$filter": "Status eq 'Seeding' or Status eq 'Queued' or Status eq 'Running' or Status eq 'Reconciling'",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"

@@ -59,7 +59,7 @@
           "type": "If",
           "expression": {
             "equals": [
-              "@triggerOutputs()?['body/IsFolder']",
+              "@triggerOutputs()?['body/{IsFolder}']",
               true
             ]
           },
@@ -76,7 +76,7 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
-                  "$filter": "Status eq 'Queued' or Status eq 'Running' or Status eq 'Reconciling'",
+                  "$filter": "Status eq 'Seeding' or Status eq 'Queued' or Status eq 'Running' or Status eq 'Reconciling'",
                   "$top": 2
                 },
                 "authentication": "@parameters('$authentication')"
@@ -199,12 +199,33 @@
                     "authentication": "@parameters('$authentication')"
                   }
                 },
-                "Record_seed_failure": {
+                "Record_root_lookup_failure": {
                   "runAfter": {
                     "Get_root_folder_identity": [
                       "Failed",
                       "TimedOut"
-                    ],
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "id": "@body('Create_walk_run')?['ID']",
+                      "item/Status/Value": "CompletedWithErrors",
+                      "item/CompletedAt": "@utcNow()",
+                      "item/ErrorMessage": "Folder-change reconciliation could not resolve its root folder."
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Record_frontier_write_failure": {
+                  "runAfter": {
                     "Seed_root_frontier": [
                       "Failed",
                       "TimedOut"
@@ -223,7 +244,7 @@
                       "id": "@body('Create_walk_run')?['ID']",
                       "item/Status/Value": "CompletedWithErrors",
                       "item/CompletedAt": "@utcNow()",
-                      "item/ErrorMessage": "Folder-change reconciliation could not seed its root frontier."
+                      "item/ErrorMessage": "Folder-change reconciliation could not create its root frontier row."
                     },
                     "authentication": "@parameters('$authentication')"
                   }

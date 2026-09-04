@@ -310,6 +310,17 @@ def validate_r2(flows):
         "R2",
         "a successful full walk must reconcile files that disappeared",
     )
+    stale_query = find_action(flows["E2"], "Get_stale_index_chunk")
+    stale_filter = str(
+        stale_query.get("inputs", {}).get("parameters", {}).get("$filter", "")
+    )
+    require(
+        "LastSeenRunId" not in stale_filter
+        and "IndexedAt" not in stale_filter
+        and bool(find_action(flows["E2"], "Filter_stale_index_rows")),
+        "R2/C1",
+        "stale reconciliation must page by indexed ID and filter locally",
+    )
     require(
         "IndexWalkRunListName" in worker_raw
         and "CompletedWithErrors" in worker_raw,
@@ -335,6 +346,11 @@ def validate_r2(flows):
         and bool(find_action(flows["F3"], "HANDLE_updated_folder")),
         "R2",
         "folder delete, rename and move events must queue full reconciliation",
+    )
+    require(
+        "{IsFolder}" in raw(flows["F3"]),
+        "R2",
+        "folder-update reconciliation must use the updated-file trigger token {IsFolder}",
     )
     delta_raw = raw(flows["F"])
     require(
@@ -476,6 +492,13 @@ def validate_r5(config, flows):
         "Persist_agent_call_count" in processing_raw,
         "R5/C4",
         "agent cost must be persisted immediately after each metered call",
+    )
+    require(
+        "AgentEffectState" in processing_raw
+        and "ParsedManifest" in processing_raw
+        and "UnknownSideEffects" in processing_raw,
+        "R5/R7",
+        "agent effects must distinguish parsed manifests from unknown side effects",
     )
     require(
         '"type":["integer","null"]' in processing_raw.replace(" ", ""),
@@ -670,6 +693,11 @@ def validate_delivery(config, flows):
         and "deployment-settings.resolved.json" in deploy_workflow,
         "DELIVERY",
         "deployment must resolve protected environment bindings and import only the resolved settings",
+    )
+    require(
+        "use-deployment-settings-file: true" in deploy_workflow,
+        "DELIVERY",
+        "Power Platform import must explicitly enable the resolved settings file",
     )
     for binding in (
         "FI_SITE_ADDRESS",

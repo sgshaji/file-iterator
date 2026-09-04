@@ -72,8 +72,9 @@ When A2 finishes planning a live run, the `RegenerationRun` item moves to
 
 A reviewer inspects `PlannedCount`, `RequiresSecondConfirmation` and the
 persisted work items, then changes `ApprovalDecision` to `Approved` or
-`Rejected`. A3 records the editor as `ApprovedBy` and moves the run to
-`Approved` or `Cancelled`.
+`Rejected`. When `RequiresSecondConfirmation=true`, the reviewer must also set
+`SecondConfirmation=Confirmed`. A3 records the editor as `ApprovedBy` and moves
+the run to `Approved` or `Cancelled`.
 
 ## Validation
 

@@ -259,7 +259,7 @@ PROCESS_ACTIONS = json.loads(
                 "id": "@items('For_each_work_item')?['ID']",
                 "item/Status/Value": "Succeeded",
                 "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                "item/HasAgentManifest": true,
+                "item/AgentEffectState/Value": "ParsedManifest",
                 "item/ValidationResult": "Agent status OK; every reported output has verdict PASS and stored byte counts were verified by pd_tools.py.",
                 "item/ErrorMessage": "",
                 "item/CompletedAt": "@utcNow()"
@@ -305,7 +305,7 @@ PROCESS_ACTIONS = json.loads(
                       "id": "@items('For_each_work_item')?['ID']",
                       "item/Status/Value": "Failed",
                       "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                      "item/HasAgentManifest": true,
+                      "item/AgentEffectState/Value": "ParsedManifest",
                       "item/ValidationResult": "Source preference changed after planning; no conversion was produced.",
                       "item/ErrorMessage": "Publish the same template version again to re-plan the current preferred source.",
                       "item/CompletedAt": "@utcNow()"
@@ -331,7 +331,7 @@ PROCESS_ACTIONS = json.loads(
                         "id": "@items('For_each_work_item')?['ID']",
                         "item/Status/Value": "Failed",
                         "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                        "item/HasAgentManifest": true,
+                        "item/AgentEffectState/Value": "ParsedManifest",
                         "item/ValidationResult": "@{concat('Agent status ', body('PARSE_agent_report')?['status'], '; reason=', body('PARSE_agent_report')?['reason'])}",
                         "item/ErrorMessage": "@{take(coalesce(body('PARSE_agent_report')?['notes'], body('PARSE_agent_report')?['reason']), 4000)}",
                         "item/CompletedAt": "@utcNow()"
@@ -364,7 +364,7 @@ PROCESS_ACTIONS = json.loads(
               "id": "@items('For_each_work_item')?['ID']",
               "item/Status/Value": "Failed",
               "item/AgentResultJson": "@string(outputs('EXTRACT_reply_text'))",
-              "item/HasAgentManifest": true,
+              "item/AgentEffectState/Value": "UnknownSideEffects",
               "item/ValidationResult": "Agent reply could not be parsed as the contracted JSON report.",
               "item/ErrorMessage": "@{take(string(outputs('CAPTURE_agent_response')), 4000)}",
               "item/CompletedAt": "@utcNow()"
@@ -403,7 +403,7 @@ PROCESS_ACTIONS["FILTER_non_pass_outputs"] = {
     "type": "Query",
     "inputs": {
         "from": "@body('PARSE_agent_report')?['outputs']",
-        "where": "@not(equals(item()?['verdict'], 'PASS'))",
+        "where": "@or(not(equals(item()?['verdict'], 'PASS')), equals(item()?['bytesSent'], null), equals(item()?['bytesStored'], null), lessOrEquals(int(coalesce(item()?['bytesSent'], 0)), 0), less(int(coalesce(item()?['bytesStored'], 0)), int(coalesce(item()?['bytesSent'], 0))))",
     },
     "description": (
         "Defence in depth: top-level OK is accepted only when every output "
@@ -441,7 +441,7 @@ for _name, _action in PROCESS_ACTIONS.items():
         }
 PROCESS_ACTIONS = _with_durable_count
 PROCESS_ACTIONS["CAPTURE_agent_response"]["runAfter"] = {
-    "Persist_agent_call_count": ["Succeeded"]
+    "Count_agent_call": ["Succeeded"]
 }
 
 
@@ -528,6 +528,10 @@ def expected_text():
         "first(body('Get_approved_run')?['value'])?['ID'])}"
     )
     root["Mark_run_running"]["inputs"]["parameters"]["id"] = selected_id
+    root["Mark_run_running"]["inputs"]["parameters"]["item/StartedAt"] = (
+        "@{if(greater(length(body('Get_active_run')?['value']), 0), "
+        "first(body('Get_active_run')?['value'])?['StartedAt'], utcNow())}"
+    )
     selected_count = (
         "@add(int(coalesce(if(greater(length(body('Get_active_run')?['value']), 0), "
         "first(body('Get_active_run')?['value'])?['AgentCallCount'], "
@@ -538,6 +542,17 @@ def expected_text():
     root["Roll_up_agent_call_count"]["inputs"]["parameters"][
         "item/AgentCallCount"
     ] = selected_count
+    stale_patch = (
+        root["Reap_stale_claims"]["actions"]["For_each_stale_item"]["actions"]
+        ["Release_stale_claim"]["inputs"]["parameters"]
+    )
+    stale_patch["item/AgentEffectState/Value"] = "UnknownSideEffects"
+    failure_patch = (
+        root["For_each_work_item"]["actions"]["Skip_if_backpressure"]["else"]
+        ["actions"]["Handle_processing_failure"]["actions"]
+        ["Mark_item_failed_or_retry"]["inputs"]["parameters"]
+    )
+    failure_patch["item/AgentEffectState/Value"] = "UnknownSideEffects"
     process = (
         properties["definition"]["actions"]["For_each_work_item"]["actions"]
         ["Skip_if_backpressure"]["else"]["actions"]["Process_document"]

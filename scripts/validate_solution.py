@@ -52,10 +52,10 @@ REQUIRED_INDEXES = {
         "UniqueId", "ListItemId", "ParentFolderUniqueId", "DocumentStem", "DocumentKey",
         "DocumentRole", "IsExcluded"
     },
-    "RegenerationRun": {"RunId", "RunKey", "Status", "TemplateName"},
+    "RegenerationRun": {"RunId", "RunKey", "Status", "TemplateName", "StartedAt"},
     "RegenerationWorkItem": {
         "RunId", "SourceUniqueId", "SourceDocumentKey", "TemplateName",
-        "TemplateFingerprint", "Status", "HasAgentManifest"
+        "TemplateFingerprint", "Status", "AgentEffectState"
     },
     "WalkFrontier": {"WalkRunId", "Status"},
     "IndexWalkRun": {"WalkRunId", "Status"},

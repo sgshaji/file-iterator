@@ -102,7 +102,8 @@
                       "id": "@items('For_each_stale_item')?['ID']",
                       "item/Status/Value": "Failed",
                       "item/ClaimedBy": "",
-                      "item/ErrorMessage": "Claim expired. The item was parked for review because the previous run may have produced side effects."
+                      "item/ErrorMessage": "Claim expired. The item was parked for review because the previous run may have produced side effects.",
+                      "item/AgentEffectState/Value": "UnknownSideEffects"
                     },
                     "authentication": "@parameters('$authentication')"
                   }
@@ -251,7 +252,8 @@
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
               "id": "@{if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['ID'], first(body('Get_approved_run')?['value'])?['ID'])}",
-              "item/Status/Value": "Running"
+              "item/Status/Value": "Running",
+              "item/StartedAt": "@{if(greater(length(body('Get_active_run')?['value']), 0), first(body('Get_active_run')?['value'])?['StartedAt'], utcNow())}"
             },
             "authentication": "@parameters('$authentication')"
           }
@@ -411,7 +413,7 @@
                       },
                       "CAPTURE_agent_response": {
                         "runAfter": {
-                          "Persist_agent_call_count": [
+                          "Count_agent_call": [
                             "Succeeded"
                           ]
                         },
@@ -562,7 +564,7 @@
                         "type": "Query",
                         "inputs": {
                           "from": "@body('PARSE_agent_report')?['outputs']",
-                          "where": "@not(equals(item()?['verdict'], 'PASS'))"
+                          "where": "@or(not(equals(item()?['verdict'], 'PASS')), equals(item()?['bytesSent'], null), equals(item()?['bytesStored'], null), lessOrEquals(int(coalesce(item()?['bytesSent'], 0)), 0), less(int(coalesce(item()?['bytesStored'], 0)), int(coalesce(item()?['bytesSent'], 0))))"
                         },
                         "description": "Defence in depth: top-level OK is accepted only when every output independently reports a PASS byte-verification verdict."
                       },
@@ -611,7 +613,7 @@
                                 "id": "@items('For_each_work_item')?['ID']",
                                 "item/Status/Value": "Succeeded",
                                 "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                                "item/HasAgentManifest": true,
+                                "item/AgentEffectState/Value": "ParsedManifest",
                                 "item/ValidationResult": "Agent status OK; every reported output has verdict PASS and stored byte counts were verified by pd_tools.py.",
                                 "item/ErrorMessage": "",
                                 "item/CompletedAt": "@utcNow()"
@@ -657,7 +659,7 @@
                                       "id": "@items('For_each_work_item')?['ID']",
                                       "item/Status/Value": "Failed",
                                       "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                                      "item/HasAgentManifest": true,
+                                      "item/AgentEffectState/Value": "ParsedManifest",
                                       "item/ValidationResult": "Source preference changed after planning; no conversion was produced.",
                                       "item/ErrorMessage": "Publish the same template version again to re-plan the current preferred source.",
                                       "item/CompletedAt": "@utcNow()"
@@ -683,7 +685,7 @@
                                         "id": "@items('For_each_work_item')?['ID']",
                                         "item/Status/Value": "Failed",
                                         "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
-                                        "item/HasAgentManifest": true,
+                                        "item/AgentEffectState/Value": "ParsedManifest",
                                         "item/ValidationResult": "@{concat('Agent status ', body('PARSE_agent_report')?['status'], '; reason=', body('PARSE_agent_report')?['reason'])}",
                                         "item/ErrorMessage": "@{take(coalesce(body('PARSE_agent_report')?['notes'], body('PARSE_agent_report')?['reason']), 4000)}",
                                         "item/CompletedAt": "@utcNow()"
@@ -718,7 +720,7 @@
                             "id": "@items('For_each_work_item')?['ID']",
                             "item/Status/Value": "Failed",
                             "item/AgentResultJson": "@string(outputs('EXTRACT_reply_text'))",
-                            "item/HasAgentManifest": true,
+                            "item/AgentEffectState/Value": "UnknownSideEffects",
                             "item/ValidationResult": "Agent reply could not be parsed as the contracted JSON report.",
                             "item/ErrorMessage": "@{take(string(outputs('CAPTURE_agent_response')), 4000)}",
                             "item/CompletedAt": "@utcNow()"
@@ -803,7 +805,8 @@
                             "item/Status/Value": "Failed",
                             "item/AttemptCount": "@add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1)",
                             "item/ErrorMessage": "@{take(string(result('Process_document')), 4000)}",
-                            "item/CompletedAt": "@utcNow()"
+                            "item/CompletedAt": "@utcNow()",
+                            "item/AgentEffectState/Value": "UnknownSideEffects"
                           },
                           "authentication": "@parameters('$authentication')"
                         },

@@ -225,18 +225,27 @@
                       "parameters": {
                         "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                         "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                        "$filter": "ID gt @{int(coalesce(first(body('Get_active_walk')?['value'])?['ReconciliationCursorId'], 0))} and DocumentRole eq 'Source' and IsExcluded eq 0 and (LastSeenRunId ne '@{first(body('Get_active_walk')?['value'])?['WalkRunId']}' or LastSeenRunId eq null) and (IndexedAt le datetime'@{formatDateTime(first(body('Get_active_walk')?['value'])?['StartedAt'], 'yyyy-MM-ddTHH:mm:ssZ')}' or IndexedAt eq null)",
+                        "$filter": "ID gt @{int(coalesce(first(body('Get_active_walk')?['value'])?['ReconciliationCursorId'], 0))}",
                         "$orderby": "ID asc",
+                        "$select": "ID,DocumentRole,IsExcluded,LastSeenRunId,IndexedAt",
                         "$top": 200
                       },
                       "authentication": "@parameters('$authentication')"
                     },
-                    "description": "Only a fully drained, error-free walk may exclude rows it did not see. Reconciliation is paged so deleted files cannot accumulate into one action output."
+                    "description": "Threshold-safe raw page selected only by indexed ID. Stale predicates are applied locally before the cursor advances over the raw page."
+                  },
+                  "Filter_stale_index_rows": {
+                    "runAfter": { "Get_stale_index_chunk": ["Succeeded"] },
+                    "type": "Query",
+                    "inputs": {
+                      "from": "@body('Get_stale_index_chunk')?['value']",
+                      "where": "@and(equals(item()?['DocumentRole']?['Value'], 'Source'), equals(item()?['IsExcluded'], false), not(equals(coalesce(item()?['LastSeenRunId'], ''), first(body('Get_active_walk')?['value'])?['WalkRunId'])), or(empty(item()?['IndexedAt']), lessOrEquals(ticks(item()?['IndexedAt']), ticks(first(body('Get_active_walk')?['value'])?['StartedAt']))))"
+                    }
                   },
                   "For_each_stale_index_row": {
-                    "runAfter": { "Get_stale_index_chunk": ["Succeeded"] },
+                    "runAfter": { "Filter_stale_index_rows": ["Succeeded"] },
                     "type": "Foreach",
-                    "foreach": "@body('Get_stale_index_chunk')?['value']",
+                    "foreach": "@body('Filter_stale_index_rows')",
                     "runtimeConfiguration": {
                       "concurrency": { "repetitions": 1 }
                     },
