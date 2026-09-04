@@ -41,17 +41,13 @@
       <RootComponent type="380" schemaName="fi_ExcludedFolderNames" behavior="0" />
       <RootComponent type="380" schemaName="fi_SourceExtensions" behavior="0" />
       <RootComponent type="380" schemaName="fi_BatchSize" behavior="0" />
-      <RootComponent type="380" schemaName="fi_ScheduleIntervalMinutes" behavior="0" />
       <RootComponent type="380" schemaName="fi_MaxAttempts" behavior="0" />
       <RootComponent type="380" schemaName="fi_MaxDocumentsPerRun" behavior="0" />
       <RootComponent type="380" schemaName="fi_StaleClaimMinutes" behavior="0" />
       <RootComponent type="380" schemaName="fi_WalkFolderChunkSize" behavior="0" />
-      <RootComponent type="380" schemaName="fi_MinOutputSizeRatio" behavior="0" />
-      <RootComponent type="380" schemaName="fi_MaxOutputSizeRatio" behavior="0" />
       <RootComponent type="380" schemaName="fi_DryRun" behavior="0" />
-      <RootComponent type="380" schemaName="fi_EnableConcurrency" behavior="0" />
       <RootComponent type="380" schemaName="fi_NotificationRecipient" behavior="0" />
-      <RootComponent type="380" schemaName="fi_AgentEndpointName" behavior="0" />
+      <RootComponent type="380" schemaName="fi_AgentId" behavior="0" />
       <RootComponent type="380" schemaName="fi_IndexListName" behavior="0" />
       <RootComponent type="380" schemaName="fi_RunListName" behavior="0" />
       <RootComponent type="380" schemaName="fi_WorkItemListName" behavior="0" />
@@ -59,6 +55,7 @@
       <RootComponent type="10099" schemaName="fi_sharedsharepointonline" behavior="0" />
       <RootComponent type="10099" schemaName="fi_sharedapprovals" behavior="0" />
       <RootComponent type="10099" schemaName="fi_sharedoffice365" behavior="0" />
+      <RootComponent type="10099" schemaName="fi_sharedagentnode" behavior="0" />
     </RootComponents>
     <MissingDependencies>
       <MissingDependency>

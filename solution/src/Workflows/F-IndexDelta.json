@@ -23,7 +23,7 @@
           "inputs": {
             "host": {
               "connectionName": "shared_sharepointonline",
-              "operationId": "GetOnUpdatedItems",
+              "operationId": "GetOnUpdatedFileItems",
               "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
             },
             "parameters": {
@@ -57,7 +57,7 @@
               {
                 "name": "ExcludedFolders",
                 "type": "array",
-                "value": "@json(parameters('fi_ExcludedFolderNames (fi_ExcludedFolderNames)'))"
+                "value": "@json(toLower(parameters('fi_ExcludedFolderNames (fi_ExcludedFolderNames)')))"
               }
             ]
           }
@@ -96,7 +96,7 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "parameters/method": "GET",
-                  "parameters/uri": "_api/web/GetFileByServerRelativePath(decodedurl='@{triggerOutputs()?['body/{FullPath}']}')?$select=UniqueId,Name,ServerRelativeUrl,Length,TimeLastModified",
+                  "parameters/uri": "_api/web/GetFileByServerRelativePath(decodedurl='@{replace(triggerOutputs()?['body/{FullPath}'],'''','''''')}')?$select=UniqueId,Name,ServerRelativeUrl,Length,TimeLastModified",
                   "parameters/headers": { "Accept": "application/json;odata=verbose" }
                 },
                 "authentication": "@parameters('$authentication')"
@@ -124,7 +124,7 @@
             "Compose_document_role": {
               "runAfter": { "Find_existing_index_row": ["Succeeded"] },
               "type": "Compose",
-              "inputs": "@if(endsWith(outputs('Compose_file_facts')?['ParentFolderUrl'], concat('/', parameters('fi_OutputFolderName (fi_OutputFolderName)'))), 'Output', if(endsWith(outputs('Compose_file_facts')?['ParentFolderUrl'], concat('/', parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)'))), 'Archived', if(startsWith(outputs('Compose_file_facts')?['ParentFolderUrl'], parameters('fi_TemplateFolderPath (fi_TemplateFolderPath)')), 'Template', 'Source')))"
+              "inputs": "@if(contains(toLower(concat('/', outputs('Compose_file_facts')?['ParentFolderUrl'], '/')), toLower(concat('/', parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)'), '/'))), 'Archived', if(contains(toLower(concat('/', outputs('Compose_file_facts')?['ParentFolderUrl'], '/')), toLower(concat('/', parameters('fi_OutputFolderName (fi_OutputFolderName)'), '/'))), 'Output', if(startsWith(toLower(outputs('Compose_file_facts')?['ParentFolderUrl']), toLower(parameters('fi_TemplateFolderPath (fi_TemplateFolderPath)'))), 'Template', 'Source')))"
             },
             "Upsert_index_row": {
               "runAfter": { "Compose_document_role": ["Succeeded"] },
@@ -154,7 +154,7 @@
                       "item/SizeBytes": "@int(coalesce(body('Get_file_identity')?['d']?['Length'], 0))",
                       "item/TimeLastModified": "@body('Get_file_identity')?['d']?['TimeLastModified']",
                       "item/DocumentRole/Value": "@outputs('Compose_document_role')",
-                      "item/IsExcluded": "@contains(variables('ExcludedFolders'), last(split(outputs('Compose_file_facts')?['ParentFolderUrl'], '/')))",
+                      "item/IsExcluded": "@or(equals(outputs('Compose_document_role'), 'Output'), equals(outputs('Compose_document_role'), 'Archived'))",
                       "item/IndexedAt": "@utcNow()"
                     },
                     "authentication": "@parameters('$authentication')"
@@ -181,6 +181,7 @@
                         "item/SizeBytes": "@int(coalesce(body('Get_file_identity')?['d']?['Length'], 0))",
                         "item/TimeLastModified": "@body('Get_file_identity')?['d']?['TimeLastModified']",
                         "item/DocumentRole/Value": "@outputs('Compose_document_role')",
+                        "item/IsExcluded": "@or(equals(outputs('Compose_document_role'), 'Output'), equals(outputs('Compose_document_role'), 'Archived'))",
                         "item/IndexedAt": "@utcNow()"
                       },
                       "authentication": "@parameters('$authentication')"

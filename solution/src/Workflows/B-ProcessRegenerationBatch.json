@@ -4,22 +4,44 @@
     "connectionReferences": {
       "shared_sharepointonline": {
         "runtimeSource": "embedded",
-        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
-        "api": { "name": "shared_sharepointonline" }
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
+      },
+      "shared_agentnode": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedagentnode"
+        },
+        "api": {
+          "name": "shared_agentnode"
+        }
       }
     },
     "definition": {
       "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
       "contentVersion": "1.0.0.0",
       "parameters": {
-        "$connections": { "defaultValue": {}, "type": "Object" },
-        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
       },
       "triggers": {
         "Recurrence": {
           "type": "Recurrence",
-          "recurrence": { "frequency": "Minute", "interval": 15 },
-          "description": "Interval should be set from fi_ScheduleIntervalMinutes. Together with fi_BatchSize this is the throttle for both the 600 calls/min connector limit and agent capacity consumption. A queue of 50 and a queue of 5,000 behave identically; the latter simply takes more cycles."
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 15
+          },
+          "description": "The 15-minute recurrence and fi_BatchSize jointly throttle the 600 calls/min connector limit and agent capacity consumption. Recurrence is a design-time Power Automate setting and is reviewed in source rather than exposed as an ignored environment variable."
         }
       },
       "actions": {
@@ -47,10 +69,18 @@
               }
             },
             "For_each_stale_item": {
-              "runAfter": { "Get_stale_items": ["Succeeded"] },
+              "runAfter": {
+                "Get_stale_items": [
+                  "Succeeded"
+                ]
+              },
               "type": "Foreach",
               "foreach": "@body('Get_stale_items')?['value']",
-              "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              },
               "actions": {
                 "Release_stale_claim": {
                   "runAfter": {},
@@ -77,7 +107,12 @@
           }
         },
         "Get_active_run": {
-          "runAfter": { "Reap_stale_claims": ["Succeeded", "Failed"] },
+          "runAfter": {
+            "Reap_stale_claims": [
+              "Succeeded",
+              "Failed"
+            ]
+          },
           "type": "OpenApiConnection",
           "inputs": {
             "host": {
@@ -97,48 +132,89 @@
           "description": "Only an approved, non-dry-run run is executable. One run at a time, oldest first - concurrent runs would compete for the same agent capacity and make cost unpredictable."
         },
         "Exit_if_no_active_run": {
-          "runAfter": { "Get_active_run": ["Succeeded"] },
+          "runAfter": {
+            "Get_active_run": [
+              "Succeeded"
+            ]
+          },
           "type": "If",
-          "expression": { "equals": [ "@length(body('Get_active_run')?['value'])", 0 ] },
+          "expression": {
+            "equals": [
+              "@length(body('Get_active_run')?['value'])",
+              0
+            ]
+          },
           "actions": {
             "Terminate_idle": {
               "runAfter": {},
               "type": "Terminate",
-              "inputs": { "runStatus": "Succeeded" }
+              "inputs": {
+                "runStatus": "Succeeded"
+              }
             }
           },
-          "else": { "actions": {} }
+          "else": {
+            "actions": {}
+          }
         },
         "Init_ActiveRunId": {
-          "runAfter": { "Exit_if_no_active_run": ["Succeeded"] },
+          "runAfter": {
+            "Exit_if_no_active_run": [
+              "Succeeded"
+            ]
+          },
           "type": "InitializeVariable",
           "inputs": {
             "variables": [
-              { "name": "ActiveRunId", "type": "string", "value": "@{first(body('Get_active_run')?['value'])?['RunId']}" }
+              {
+                "name": "ActiveRunId",
+                "type": "string",
+                "value": "@{first(body('Get_active_run')?['value'])?['RunId']}"
+              }
             ]
           }
         },
         "Init_AgentCalls": {
-          "runAfter": { "Init_ActiveRunId": ["Succeeded"] },
+          "runAfter": {
+            "Init_ActiveRunId": [
+              "Succeeded"
+            ]
+          },
           "type": "InitializeVariable",
           "inputs": {
             "variables": [
-              { "name": "AgentCallsThisBatch", "type": "integer", "value": 0 }
+              {
+                "name": "AgentCallsThisBatch",
+                "type": "integer",
+                "value": 0
+              }
             ]
           },
           "description": "Rolled up into the run's AgentCallCount, the headline cost metric reported by Flow C."
         },
         "Init_Backpressure": {
-          "runAfter": { "Init_AgentCalls": ["Succeeded"] },
+          "runAfter": {
+            "Init_AgentCalls": [
+              "Succeeded"
+            ]
+          },
           "type": "InitializeVariable",
           "inputs": {
             "variables": [
-              { "name": "BackpressureHit", "type": "boolean", "value": false }
+              {
+                "name": "BackpressureHit",
+                "type": "boolean",
+                "value": false
+              }
             ]
           }
         },
         "Mark_run_running": {
-          "runAfter": { "Init_Backpressure": ["Succeeded"] },
+          "runAfter": {
+            "Init_Backpressure": [
+              "Succeeded"
+            ]
+          },
           "type": "OpenApiConnection",
           "inputs": {
             "host": {
@@ -156,7 +232,11 @@
           }
         },
         "Claim_batch": {
-          "runAfter": { "Mark_run_running": ["Succeeded"] },
+          "runAfter": {
+            "Mark_run_running": [
+              "Succeeded"
+            ]
+          },
           "type": "OpenApiConnection",
           "inputs": {
             "host": {
@@ -176,16 +256,29 @@
           "description": "RunId and Status are indexed columns. Without that this query degrades as run history accumulates - the same threshold problem this solution exists to avoid."
         },
         "For_each_work_item": {
-          "runAfter": { "Claim_batch": ["Succeeded"] },
+          "runAfter": {
+            "Claim_batch": [
+              "Succeeded"
+            ]
+          },
           "type": "Foreach",
           "foreach": "@body('Claim_batch')?['value']",
-          "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
-          "description": "Sequential by default. Concurrency multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic; enable fi_EnableConcurrency only after measurement.",
+          "runtimeConfiguration": {
+            "concurrency": {
+              "repetitions": 1
+            }
+          },
+          "description": "Sequential by design. Concurrency multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic; change this source setting only after measured tenant testing.",
           "actions": {
             "Skip_if_backpressure": {
               "runAfter": {},
               "type": "If",
-              "expression": { "equals": [ "@variables('BackpressureHit')", true ] },
+              "expression": {
+                "equals": [
+                  "@variables('BackpressureHit')",
+                  true
+                ]
+              },
               "description": "BACKPRESSURE. Once a throttling or capacity error is seen, stop claiming further work and let the next cycle retry. Retrying hard against a capacity limit converts a delay into a cost.",
               "actions": {},
               "else": {
@@ -213,165 +306,329 @@
                     "description": "Claim BEFORE processing. Without this, two overlapping batches regenerate the same document twice - wrong, and double the cost."
                   },
                   "Process_document": {
-                    "runAfter": { "Claim_item": ["Succeeded"] },
+                    "runAfter": {
+                      "Claim_item": [
+                        "Succeeded"
+                      ]
+                    },
                     "type": "Scope",
                     "description": "Wrapped in a scope so one document's failure never aborts the batch. A single malformed source must not stop 300 others.",
                     "actions": {
-                      "STEP_1_Read_source_document": {
+                      "COMPOSE_agent_prompt": {
                         "runAfter": {},
+                        "type": "Compose",
+                        "inputs": "@{concat('Convert this Position Description using the published template.', decodeUriComponent('%0A%0A'), 'siteUrl: ', parameters('fi_SiteAddress (fi_SiteAddress)'), decodeUriComponent('%0A'), 'templatePath: ', items('For_each_work_item')?['TemplateUrl'], decodeUriComponent('%0A'), 'sourcePath: ', items('For_each_work_item')?['SourceUrl'], decodeUriComponent('%0A'), 'runId: ', variables('ActiveRunId'))}",
+                        "description": "The deployed skill requires one concrete source PD path and one template file or folder per invocation. Flow A has already selected the preferred file of any PDF/DOCX pair."
+                      },
+                      "STEP_2_Invoke_agent": {
+                        "runAfter": {
+                          "COMPOSE_agent_prompt": [
+                            "Succeeded"
+                          ]
+                        },
                         "type": "OpenApiConnection",
                         "inputs": {
                           "host": {
-                            "connectionName": "shared_sharepointonline",
-                            "operationId": "GetFileContentByPath",
-                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                            "connectionName": "shared_agentnode",
+                            "operationId": "InvokeAgent",
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_agentnode"
                           },
                           "parameters": {
-                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                            "path": "@items('For_each_work_item')?['SourceUrl']",
-                            "inferContentType": false
+                            "body/agentId": "@parameters('fi_AgentId (fi_AgentId)')",
+                            "body/prompt": "@outputs('COMPOSE_agent_prompt')"
                           },
                           "authentication": "@parameters('$authentication')"
-                        }
-                      },
-                      "STEP_2_Invoke_agent": {
-                        "runAfter": { "STEP_1_Read_source_document": ["Succeeded"] },
-                        "type": "Workflow",
-                        "inputs": {
-                          "host": {
-                            "workflowReferenceName": "@parameters('fi_AgentEndpointName (fi_AgentEndpointName)')"
-                          },
-                          "body": {
-                            "sourceUrl": "@items('For_each_work_item')?['SourceUrl']",
-                            "sourceContent": "@body('STEP_1_Read_source_document')",
-                            "templateName": "@items('For_each_work_item')?['TemplateName']",
-                            "templateFingerprint": "@items('For_each_work_item')?['TemplateFingerprint']",
-                            "runId": "@variables('ActiveRunId')",
-                            "outputContract": "Return a strictly structured object: generatedContent (base64 docx), status ('Generated' or 'Refused'), and reason. Do not return prose."
-                          }
                         },
-                        "description": "THE ONLY METERED OPERATION IN THIS SOLUTION. Replace the Workflow action with the Copilot Studio agent action once the agent is published; the surrounding contract does not change. The agent must return a deterministic structure, not prose, so the response can be validated before anything is written. IF MEASURED WORST-CASE LATENCY APPROACHES THE ACTION REQUEST TIMEOUT, this synchronous shape is unsafe and must move to an asynchronous handoff - the agent writes to staging and updates the work item, and a separate pass validates and writes. The persisted queue already supports that; it is why state lives in a list."
+                        "description": "THE ONLY METERED OPERATION. Connector, operation and parameter names are taken from the working reference export. The existing agent archives displaced files, writes outputs, verifies stored byte counts and returns one JSON report."
                       },
                       "Count_agent_call": {
-                        "runAfter": { "STEP_2_Invoke_agent": ["Succeeded", "Failed", "TimedOut"] },
+                        "runAfter": {
+                          "STEP_2_Invoke_agent": [
+                            "Succeeded",
+                            "Failed",
+                            "TimedOut"
+                          ]
+                        },
                         "type": "IncrementVariable",
-                        "inputs": { "name": "AgentCallsThisBatch", "value": 1 },
-                        "description": "Counted whether or not it succeeded - a failed call still consumes capacity, and the cost metric must reflect that."
+                        "inputs": {
+                          "name": "AgentCallsThisBatch",
+                          "value": 1
+                        },
+                        "description": "Counted whether or not it succeeded because a failed call can still consume capacity."
                       },
-                      "STEP_3_Validate_response": {
-                        "runAfter": { "Count_agent_call": ["Succeeded"] },
+                      "CAPTURE_agent_response": {
+                        "runAfter": {
+                          "Count_agent_call": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "Compose",
+                        "inputs": "@coalesce(body('STEP_2_Invoke_agent'), '')",
+                        "description": "Verbatim connector response retained in run history before parsing."
+                      },
+                      "EXTRACT_reply_text": {
+                        "runAfter": {
+                          "CAPTURE_agent_response": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "Compose",
+                        "inputs": "@if(empty(coalesce(body('STEP_2_Invoke_agent')?['text'], body('STEP_2_Invoke_agent')?['response'], body('STEP_2_Invoke_agent')?['output'])), string(outputs('CAPTURE_agent_response')), string(coalesce(body('STEP_2_Invoke_agent')?['text'], body('STEP_2_Invoke_agent')?['response'], body('STEP_2_Invoke_agent')?['output'])))",
+                        "description": "Accept a wrapped text/response/output property or a bare JSON object. The fallback checks emptiness before choosing, so an absent wrapper cannot suppress the raw response."
+                      },
+                      "PARSE_agent_report": {
+                        "runAfter": {
+                          "EXTRACT_reply_text": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "ParseJson",
+                        "inputs": {
+                          "content": "@outputs('EXTRACT_reply_text')",
+                          "schema": {
+                            "type": "object",
+                            "required": [
+                              "status",
+                              "reason",
+                              "sourceFile",
+                              "sourceChosenBecause",
+                              "outputs",
+                              "notes"
+                            ],
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "OK",
+                                  "FAILED",
+                                  "SKIPPED"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "sourceFile": {
+                                "type": "string"
+                              },
+                              "sourceChosenBecause": {
+                                "type": "string"
+                              },
+                              "notes": {
+                                "type": "string"
+                              },
+                              "outputs": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "template",
+                                    "kind",
+                                    "destinationFolderPath",
+                                    "outputFileName",
+                                    "bytesSent",
+                                    "bytesStored",
+                                    "verdict",
+                                    "archivedAs"
+                                  ],
+                                  "properties": {
+                                    "template": {
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "pd",
+                                        "ad"
+                                      ]
+                                    },
+                                    "destinationFolderPath": {
+                                      "type": "string"
+                                    },
+                                    "outputFileName": {
+                                      "type": "string"
+                                    },
+                                    "bytesSent": {
+                                      "type": "integer"
+                                    },
+                                    "bytesStored": {
+                                      "type": "integer"
+                                    },
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "PASS",
+                                        "FAIL",
+                                        "CHECK"
+                                      ]
+                                    },
+                                    "verdictNote": {
+                                      "type": "string"
+                                    },
+                                    "missingFields": {
+                                      "type": "array"
+                                    },
+                                    "removed": {
+                                      "type": "array"
+                                    },
+                                    "highlightCleared": {
+                                      "type": "integer"
+                                    },
+                                    "archivedAs": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "description": "The schema mirrors pd_tools.py report output. Invalid envelopes are classified separately from agent-declared failures."
+                      },
+                      "HANDLE_parsed_report": {
+                        "runAfter": {
+                          "PARSE_agent_report": [
+                            "Succeeded",
+                            "Failed"
+                          ]
+                        },
                         "type": "If",
                         "expression": {
                           "and": [
-                            { "equals": [ "@equals(coalesce(body('STEP_2_Invoke_agent')?['status'], ''), 'Generated')", true ] },
-                            { "greater": [ "@length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))", 0 ] },
                             {
-                              "greaterOrEquals": [
-                                "@div(float(length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))), max(float(coalesce(items('For_each_work_item')?['SourceSizeBytes'], 1)), 1.0))",
-                                "@float(parameters('fi_MinOutputSizeRatio (fi_MinOutputSizeRatio)'))"
-                              ]
-                            },
-                            {
-                              "lessOrEquals": [
-                                "@div(float(length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))), max(float(coalesce(items('For_each_work_item')?['SourceSizeBytes'], 1)), 1.0))",
-                                "@float(parameters('fi_MaxOutputSizeRatio (fi_MaxOutputSizeRatio)'))"
+                              "equals": [
+                                "@result('PARSE_agent_report')[0]['status']",
+                                "Succeeded"
                               ]
                             }
                           ]
                         },
-                        "description": "VALIDATE BEFORE WRITING. An unvalidated response must never reach a business document - silent corruption is far worse than a visible failure. Rejects empty output, a refusal status, truncation (too small) and runaway generation (too large).",
                         "actions": {
-                          "STEP_4_Archive_existing_output": {
+                          "HANDLE_agent_ok": {
                             "runAfter": {},
-                            "type": "OpenApiConnection",
-                            "inputs": {
-                              "host": {
-                                "connectionName": "shared_sharepointonline",
-                                "operationId": "CopyFileAsync",
-                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                              },
-                              "parameters": {
-                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                "parameter/source": "@items('For_each_work_item')?['TargetUrl']",
-                                "parameter/destination": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}/@{parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)')}/@{replace(last(split(items('For_each_work_item')?['TargetUrl'], '/')), '.docx', '')}_@{formatDateTime(utcNow(), 'yyyyMMdd-HHmmss')}.docx",
-                                "parameter/overwriteFlag": false
-                              },
-                              "authentication": "@parameters('$authentication')"
+                            "type": "If",
+                            "expression": {
+                              "and": [
+                                {
+                                  "equals": [
+                                    "@body('PARSE_agent_report')?['status']",
+                                    "OK"
+                                  ]
+                                },
+                                {
+                                  "greater": [
+                                    "@length(body('PARSE_agent_report')?['outputs'])",
+                                    0
+                                  ]
+                                }
+                              ]
                             },
-                            "description": "ARCHIVE BEFORE OVERWRITING. This step is allowed to fail when no prior output exists, which is why the next step runs after both Succeeded and Failed. Costs one file copy. Without it, 'the agent produced rubbish across 400 documents' is a disaster instead of a rollback - and recovering would mean paying for a second full run of agent calls on top of the damage. The timestamp suffix matches the convention already present in the tree."
-                          },
-                          "STEP_5_Write_new_output": {
-                            "runAfter": { "STEP_4_Archive_existing_output": ["Succeeded", "Failed"] },
-                            "type": "OpenApiConnection",
-                            "inputs": {
-                              "host": {
-                                "connectionName": "shared_sharepointonline",
-                                "operationId": "CreateFile",
-                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                              },
-                              "parameters": {
-                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                "folderPath": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}",
-                                "name": "@{last(split(items('For_each_work_item')?['TargetUrl'], '/'))}",
-                                "body": "@base64ToBinary(body('STEP_2_Invoke_agent')?['generatedContent'])"
-                              },
-                              "authentication": "@parameters('$authentication')"
+                            "actions": {
+                              "Mark_succeeded": {
+                                "runAfter": {},
+                                "type": "OpenApiConnection",
+                                "inputs": {
+                                  "host": {
+                                    "connectionName": "shared_sharepointonline",
+                                    "operationId": "PatchItem",
+                                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                  },
+                                  "parameters": {
+                                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                    "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                    "id": "@items('For_each_work_item')?['ID']",
+                                    "item/Status/Value": "Succeeded",
+                                    "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                                    "item/ValidationResult": "Agent status OK; every reported output has verdict PASS and stored byte counts were verified by pd_tools.py.",
+                                    "item/ErrorMessage": "",
+                                    "item/CompletedAt": "@utcNow()"
+                                  },
+                                  "authentication": "@parameters('$authentication')"
+                                }
+                              }
                             },
-                            "description": "Runs whether or not the archive step succeeded, because a first-time generation has no prior output to archive. If a prior output DID exist, the archive step will have succeeded."
-                          },
-                          "STEP_6_Stamp_output_in_index": {
-                            "runAfter": { "STEP_5_Write_new_output": ["Succeeded"] },
-                            "type": "OpenApiConnection",
-                            "inputs": {
-                              "host": {
-                                "connectionName": "shared_sharepointonline",
-                                "operationId": "PostItem",
-                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                              },
-                              "parameters": {
-                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                                "item/Title": "@{last(split(items('For_each_work_item')?['TargetUrl'], '/'))}",
-                                "item/UniqueId": "@{body('STEP_5_Write_new_output')?['Id']}",
-                                "item/FileName": "@{last(split(items('For_each_work_item')?['TargetUrl'], '/'))}",
-                                "item/ServerRelativeUrl": "@items('For_each_work_item')?['TargetUrl']",
-                                "item/ParentFolderUrl": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}",
-                                "item/Extension": ".docx",
-                                "item/DocumentRole/Value": "Output",
-                                "item/TemplateName": "@items('For_each_work_item')?['TemplateName']",
-                                "item/TemplateFingerprint": "@items('For_each_work_item')?['TemplateFingerprint']",
-                                "item/IndexedAt": "@utcNow()"
-                              },
-                              "authentication": "@parameters('$authentication')"
-                            },
-                            "description": "Stamping the template fingerprint on the output is what makes COST FILTER F3 work on the next run. Without this the solution would regenerate everything every time and the whole cost model collapses."
-                          },
-                          "STEP_7_Mark_succeeded": {
-                            "runAfter": { "STEP_6_Stamp_output_in_index": ["Succeeded"] },
-                            "type": "OpenApiConnection",
-                            "inputs": {
-                              "host": {
-                                "connectionName": "shared_sharepointonline",
-                                "operationId": "PatchItem",
-                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                              },
-                              "parameters": {
-                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                                "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                                "id": "@items('For_each_work_item')?['ID']",
-                                "item/Status/Value": "Succeeded",
-                                "item/ArchiveUrl": "@{substring(items('For_each_work_item')?['TargetUrl'], 0, lastIndexOf(items('For_each_work_item')?['TargetUrl'], '/'))}/@{parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)')}/@{replace(last(split(items('For_each_work_item')?['TargetUrl'], '/')), '.docx', '')}_@{formatDateTime(utcNow(), 'yyyyMMdd-HHmmss')}.docx",
-                                "item/CompletedAt": "@utcNow()",
-                                "item/ErrorMessage": ""
-                              },
-                              "authentication": "@parameters('$authentication')"
-                            },
-                            "description": "ArchiveUrl is recorded here because Flow D rollback depends entirely on it."
+                            "else": {
+                              "actions": {
+                                "HANDLE_agent_skipped": {
+                                  "runAfter": {},
+                                  "type": "If",
+                                  "expression": {
+                                    "and": [
+                                      {
+                                        "equals": [
+                                          "@body('PARSE_agent_report')?['status']",
+                                          "SKIPPED"
+                                        ]
+                                      },
+                                      {
+                                        "equals": [
+                                          "@body('PARSE_agent_report')?['reason']",
+                                          "another-format-preferred"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "actions": {
+                                    "Mark_skipped": {
+                                      "runAfter": {},
+                                      "type": "OpenApiConnection",
+                                      "inputs": {
+                                        "host": {
+                                          "connectionName": "shared_sharepointonline",
+                                          "operationId": "PatchItem",
+                                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                        },
+                                        "parameters": {
+                                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                          "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                          "id": "@items('For_each_work_item')?['ID']",
+                                          "item/Status/Value": "Skipped",
+                                          "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                                          "item/ValidationResult": "Agent reported the normal another-format-preferred outcome.",
+                                          "item/ErrorMessage": "",
+                                          "item/CompletedAt": "@utcNow()"
+                                        },
+                                        "authentication": "@parameters('$authentication')"
+                                      }
+                                    }
+                                  },
+                                  "else": {
+                                    "actions": {
+                                      "Mark_agent_failed_or_retry": {
+                                        "runAfter": {},
+                                        "type": "OpenApiConnection",
+                                        "inputs": {
+                                          "host": {
+                                            "connectionName": "shared_sharepointonline",
+                                            "operationId": "PatchItem",
+                                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                                          },
+                                          "parameters": {
+                                            "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                                            "id": "@items('For_each_work_item')?['ID']",
+                                            "item/Status/Value": "@{if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
+                                            "item/AgentResultJson": "@string(body('PARSE_agent_report'))",
+                                            "item/ValidationResult": "@{concat('Agent status ', body('PARSE_agent_report')?['status'], '; reason=', body('PARSE_agent_report')?['reason'])}",
+                                            "item/ErrorMessage": "@{take(coalesce(body('PARSE_agent_report')?['notes'], body('PARSE_agent_report')?['reason']), 4000)}",
+                                            "item/CompletedAt": "@utcNow()"
+                                          },
+                                          "authentication": "@parameters('$authentication')"
+                                        },
+                                        "description": "FAILED reports are retried only to MaxAttempts, then parked for review."
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
                           }
                         },
                         "else": {
                           "actions": {
-                            "Mark_validation_failed": {
+                            "Mark_unparseable_or_retry": {
                               "runAfter": {},
                               "type": "OpenApiConnection",
                               "inputs": {
@@ -384,13 +641,14 @@
                                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                                   "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                                   "id": "@items('For_each_work_item')?['ID']",
-                                  "item/Status/Value": "@{if(greaterOrEquals(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
-                                  "item/ValidationResult": "Agent response rejected. status=@{coalesce(body('STEP_2_Invoke_agent')?['status'], 'none')} reason=@{coalesce(body('STEP_2_Invoke_agent')?['reason'], 'none')} length=@{length(coalesce(body('STEP_2_Invoke_agent')?['generatedContent'], ''))}",
+                                  "item/Status/Value": "@{if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending')}",
+                                  "item/ValidationResult": "Agent reply could not be parsed as the contracted JSON report.",
+                                  "item/ErrorMessage": "@{take(string(outputs('CAPTURE_agent_response')), 4000)}",
                                   "item/CompletedAt": "@utcNow()"
                                 },
                                 "authentication": "@parameters('$authentication')"
                               },
-                              "description": "THE EXISTING OUTPUT IS LEFT UNTOUCHED. Retried until MaxAttempts, then parked as Failed for human review - unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight."
+                              "description": "An unreadable envelope is retained verbatim and retried only to MaxAttempts."
                             }
                           }
                         }
@@ -398,7 +656,12 @@
                     }
                   },
                   "Handle_processing_failure": {
-                    "runAfter": { "Process_document": ["Failed", "TimedOut"] },
+                    "runAfter": {
+                      "Process_document": [
+                        "Failed",
+                        "TimedOut"
+                      ]
+                    },
                     "type": "Scope",
                     "actions": {
                       "Detect_backpressure": {
@@ -406,23 +669,52 @@
                         "type": "If",
                         "expression": {
                           "or": [
-                            { "contains": [ "@toLower(string(result('Process_document')))", "throttl" ] },
-                            { "contains": [ "@toLower(string(result('Process_document')))", "429" ] },
-                            { "contains": [ "@toLower(string(result('Process_document')))", "capacity" ] },
-                            { "contains": [ "@toLower(string(result('Process_document')))", "quota" ] }
+                            {
+                              "contains": [
+                                "@toLower(string(result('Process_document')))",
+                                "throttl"
+                              ]
+                            },
+                            {
+                              "contains": [
+                                "@toLower(string(result('Process_document')))",
+                                "429"
+                              ]
+                            },
+                            {
+                              "contains": [
+                                "@toLower(string(result('Process_document')))",
+                                "capacity"
+                              ]
+                            },
+                            {
+                              "contains": [
+                                "@toLower(string(result('Process_document')))",
+                                "quota"
+                              ]
+                            }
                           ]
                         },
                         "actions": {
                           "Set_backpressure": {
                             "runAfter": {},
                             "type": "SetVariable",
-                            "inputs": { "name": "BackpressureHit", "value": true }
+                            "inputs": {
+                              "name": "BackpressureHit",
+                              "value": true
+                            }
                           }
                         },
-                        "else": { "actions": {} }
+                        "else": {
+                          "actions": {}
+                        }
                       },
                       "Mark_item_failed_or_retry": {
-                        "runAfter": { "Detect_backpressure": ["Succeeded"] },
+                        "runAfter": {
+                          "Detect_backpressure": [
+                            "Succeeded"
+                          ]
+                        },
                         "type": "OpenApiConnection",
                         "inputs": {
                           "host": {
@@ -434,7 +726,8 @@
                             "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                             "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
                             "id": "@items('For_each_work_item')?['ID']",
-                            "item/Status/Value": "@{if(or(variables('BackpressureHit'), less(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), int(parameters('fi_MaxAttempts (fi_MaxAttempts)')))), 'Pending', 'Failed')}",
+                            "item/Status/Value": "@{if(variables('BackpressureHit'), 'Pending', if(greaterOrEquals(add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1), int(parameters('fi_MaxAttempts (fi_MaxAttempts)'))), 'Failed', 'Pending'))}",
+                            "item/AttemptCount": "@{if(variables('BackpressureHit'), int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), add(int(coalesce(items('For_each_work_item')?['AttemptCount'], 0)), 1))}",
                             "item/ErrorMessage": "@{take(string(result('Process_document')), 4000)}",
                             "item/CompletedAt": "@utcNow()"
                           },
@@ -450,7 +743,12 @@
           }
         },
         "Roll_up_agent_call_count": {
-          "runAfter": { "For_each_work_item": ["Succeeded", "Failed"] },
+          "runAfter": {
+            "For_each_work_item": [
+              "Succeeded",
+              "Failed"
+            ]
+          },
           "type": "OpenApiConnection",
           "inputs": {
             "host": {

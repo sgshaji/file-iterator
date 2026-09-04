@@ -73,9 +73,9 @@
       "displayName": "Source Extensions",
       "type": "String",
       "required": true,
-      "defaultValue": "[\".docx\",\".doc\",\".pdf\"]",
+      "defaultValue": "[\".pdf\",\".docx\"]",
       "usedBy": ["A", "E", "F"],
-      "description": "JSON array of lower-case extensions eligible for regeneration."
+      "description": "JSON array of lower-case extensions supported by the deployed PD Conversion Assistant skill. Legacy .doc files must be migrated to .docx before entering the source tree."
     },
     {
       "schemaName": "fi_BatchSize",
@@ -85,15 +85,6 @@
       "defaultValue": 5,
       "usedBy": ["B"],
       "description": "Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot."
-    },
-    {
-      "schemaName": "fi_ScheduleIntervalMinutes",
-      "displayName": "Schedule Interval Minutes",
-      "type": "Number",
-      "required": true,
-      "defaultValue": 15,
-      "usedBy": ["B", "C"],
-      "description": "Flow B recurrence. THROTTLE 2 OF 2. Together with BatchSize this paces both the 600 calls/min connector limit and agent capacity consumption. NOTE: Power Automate recurrence triggers do not accept an expression, so this value must be applied to the trigger by hand (or by the deployment pipeline) rather than being read at runtime. It is declared here so the intended value is versioned and reviewable."
     },
     {
       "schemaName": "fi_MaxAttempts",
@@ -132,24 +123,6 @@
       "description": "Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size."
     },
     {
-      "schemaName": "fi_MinOutputSizeRatio",
-      "displayName": "Min Output Size Ratio",
-      "type": "Number",
-      "required": true,
-      "defaultValue": 0.2,
-      "usedBy": ["B"],
-      "description": "Generated output smaller than this fraction of the source is rejected as truncated. Validation runs BEFORE any write."
-    },
-    {
-      "schemaName": "fi_MaxOutputSizeRatio",
-      "displayName": "Max Output Size Ratio",
-      "type": "Number",
-      "required": true,
-      "defaultValue": 5.0,
-      "usedBy": ["B"],
-      "description": "Generated output larger than this multiple of the source is rejected as runaway."
-    },
-    {
       "schemaName": "fi_DryRun",
       "displayName": "Dry Run",
       "type": "Boolean",
@@ -157,15 +130,6 @@
       "defaultValue": true,
       "usedBy": ["A"],
       "description": "When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan."
-    },
-    {
-      "schemaName": "fi_EnableConcurrency",
-      "displayName": "Enable Concurrency",
-      "type": "Boolean",
-      "required": true,
-      "defaultValue": false,
-      "usedBy": ["B"],
-      "description": "Off by default. Parallel invocation multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic. Enable only after measurement. NOTE: loop concurrency is a design-time runtimeConfiguration setting and cannot be bound to an expression, so this must be applied to the loop by hand. It is declared here so the intended value is versioned and reviewable."
     },
     {
       "schemaName": "fi_NotificationRecipient",
@@ -177,13 +141,13 @@
       "description": "Recipient for approval requests, run summaries and failure alerts."
     },
     {
-      "schemaName": "fi_AgentEndpointName",
-      "displayName": "Agent Endpoint Name",
+      "schemaName": "fi_AgentId",
+      "displayName": "Agent Schema Name",
       "type": "String",
       "required": true,
-      "defaultValue": "",
+      "defaultValue": "cree1_pdconversionassistant_08zNQw",
       "usedBy": ["B"],
-      "description": "Identifier of the Copilot Studio agent action invoked per document. The single metered operation in the solution."
+      "description": "Schema name of the existing PD Conversion Assistant agent invoked through shared_agentnode/InvokeAgent. The agent is referenced, not copied into this solution."
     },
     {
       "schemaName": "fi_IndexListName",
@@ -240,6 +204,12 @@
       "displayName": "Office 365 Outlook (regeneration solution)",
       "connectorId": "/providers/Microsoft.PowerApps/apis/shared_office365",
       "description": "Used by Flow C for run summaries and failure alerts."
+    },
+    {
+      "schemaName": "fi_sharedagentnode",
+      "displayName": "Agent (regeneration solution)",
+      "connectorId": "/providers/Microsoft.PowerApps/apis/shared_agentnode",
+      "description": "Used only by Flow B to invoke the existing PD Conversion Assistant agent by schema name."
     }
   ]
 }

@@ -39,7 +39,9 @@ BUILTIN_FIELDS = {
     "Length", "Name", "UniqueId", "ServerRelativeUrl", "TimeLastModified",
     "Folders", "Files", "d", "value", "body",
     "status", "reason", "generatedContent", "outcome", "responses",
-    "responder", "email",
+    "responder", "email", "template", "kind", "destinationFolderPath",
+    "outputFileName", "bytesSent", "bytesStored", "verdict", "verdictNote",
+    "missingFields", "removed", "highlightCleared", "archivedAs",
 }
 
 # Columns these flows filter or sort on. SharePoint degrades on unindexed
@@ -48,7 +50,9 @@ BUILTIN_FIELDS = {
 REQUIRED_INDEXES = {
     "DocumentIndex": {"UniqueId", "DocumentRole", "ParentFolderUrl"},
     "RegenerationRun": {"RunId", "Status", "TemplateName"},
-    "RegenerationWorkItem": {"RunId", "Status"},
+    "RegenerationWorkItem": {
+        "RunId", "SourceUniqueId", "TemplateName", "TemplateFingerprint", "Status"
+    },
     "WalkFrontier": {"WalkRunId", "Status"},
 }
 

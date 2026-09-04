@@ -110,10 +110,28 @@
                     "authentication": "@parameters('$authentication')"
                   }
                 },
-                "Compose_summary": {
+                "Get_skipped_items": {
                   "runAfter": { "Get_failed_items": ["Succeeded"] },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "GetItems",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                      "$filter": "RunId eq '@{items('For_each_running_run')?['RunId']}' and Status eq 'Skipped'",
+                      "$top": 5000
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Compose_summary": {
+                  "runAfter": { "Get_skipped_items": ["Succeeded"] },
                   "type": "Compose",
-                  "inputs": "Run @{items('For_each_running_run')?['RunId']}\nTemplate: @{items('For_each_running_run')?['TemplateName']}\n\nPlanned:   @{items('For_each_running_run')?['PlannedCount']}\nSucceeded: @{length(body('Get_succeeded_items')?['value'])}\nFailed:    @{length(body('Get_failed_items')?['value'])}\n\nAgent calls consumed: @{items('For_each_running_run')?['AgentCallCount']}\n\nCOST CHECK: agent calls should be well below the total number of documents in scope. If this run consumed roughly one call per document in the library, cost filters F1/F2/F3 in Flow A are not working - check that outputs are being stamped with TemplateFingerprint by Flow B step 6.\n\n@{if(greater(length(body('Get_failed_items')?['value']), 0), 'Failed items are parked for review. Reset them to Pending to retry, or run Flow D to roll the run back.', 'No failures.')}",
+                  "inputs": "Run @{items('For_each_running_run')?['RunId']}\nTemplate: @{items('For_each_running_run')?['TemplateName']}\n\nPlanned:   @{items('For_each_running_run')?['PlannedCount']}\nSucceeded: @{length(body('Get_succeeded_items')?['value'])}\nSkipped:   @{length(body('Get_skipped_items')?['value'])}\nFailed:    @{length(body('Get_failed_items')?['value'])}\n\nAgent calls consumed: @{items('For_each_running_run')?['AgentCallCount']}\n\nCOST CHECK: one PDF/DOCX document group should produce at most one agent call. Re-publishing the same template fingerprint should produce no new work items.\n\n@{if(greater(length(body('Get_failed_items')?['value']), 0), 'Failed items are parked for review. Reset them to Pending to retry, or run Flow D to roll the run back.', 'No failures.')}",
                   "description": "The summary leads with the cost metric deliberately. It is the number that tells you whether the design is behaving."
                 },
                 "Close_run": {
@@ -132,6 +150,7 @@
                       "item/Status/Value": "@{if(greater(length(body('Get_failed_items')?['value']), 0), 'CompletedWithErrors', 'Completed')}",
                       "item/SucceededCount": "@length(body('Get_succeeded_items')?['value'])",
                       "item/FailedCount": "@length(body('Get_failed_items')?['value'])",
+                      "item/SkippedCount": "@length(body('Get_skipped_items')?['value'])",
                       "item/CompletedAt": "@utcNow()",
                       "item/SummaryMessage": "@outputs('Compose_summary')"
                     },

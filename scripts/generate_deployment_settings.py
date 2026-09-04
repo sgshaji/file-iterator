@@ -32,7 +32,6 @@ ENVIRONMENTS = ("test", "prod")
 # looked at a plan, and must not aim at a large batch on its first run.
 SAFE_DEPLOY_VALUES = {
     "fi_DryRun": "true",
-    "fi_EnableConcurrency": "false",
 }
 
 

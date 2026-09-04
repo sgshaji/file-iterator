@@ -488,11 +488,24 @@ def build_walk_actions():
                 "nextFrontier", "@json('[]')", {},
                 "Clear the next-depth accumulator at the start of each level.",
             ),
+            "LIMIT_frontier": compose(
+                (
+                    "@take(variables('frontier'), sub("
+                    "outputs('RESOLVE_effective')['maxFoldersScanned'], "
+                    "variables('foldersScanned')))"
+                ),
+                {"RESET_next_frontier": ["Succeeded"]},
+                (
+                    "Enforce the remaining scan budget inside the depth level. "
+                    "Checking only the Until condition would let one wide level "
+                    "overshoot pdh_MaxFoldersScanned."
+                ),
+            ),
             "FOR_EACH_folder": {
                 "type": "Foreach",
-                "description": "Visit every folder at the current depth.",
-                "runAfter": {"RESET_next_frontier": ["Succeeded"]},
-                "foreach": "@variables('frontier')",
+                "description": "Visit only folders that fit the remaining scan budget.",
+                "runAfter": {"LIMIT_frontier": ["Succeeded"]},
+                "foreach": "@outputs('LIMIT_frontier')",
                 "runtimeConfiguration": {"concurrency": {"repetitions": 1}},
                 "actions": {
                     "ENUMERATE_direct_children": enumerate_folder,
@@ -533,6 +546,11 @@ def build_walk_actions():
                                 {
                                     "positionFolderPath": "@items('FOR_EACH_folder')",
                                     "positionFolderName": "@{last(split(items('FOR_EACH_folder'), '/'))}",
+                                    "sourcePath": (
+                                        "@first(filter(coalesce(body('ENUMERATE_direct_children')?['Files'], json('[]')), "
+                                        "equals(contains(outputs('RESOLVE_effective')['sourceExtensions'], "
+                                        "toLower(concat('.', last(split(item()?['Name'], '.'))))), true)))?['ServerRelativeUrl']"
+                                    ),
                                     "convertibleFileCount": "@outputs('SELECT_convertible_files')",
                                     "depth": "@variables('depth')",
                                     "files": (
@@ -562,9 +580,16 @@ def build_walk_actions():
                 },
             },
             "ADVANCE_frontier": set_var(
-                "frontier", "@variables('nextFrontier')",
+                "frontier",
+                (
+                    "@concat(skip(variables('frontier'), length(outputs('LIMIT_frontier'))), "
+                    "variables('nextFrontier'))"
+                ),
                 {"FOR_EACH_folder": ["Succeeded"]},
-                "Descend one level.",
+                (
+                    "Keep any same-level folders that did not fit the scan budget "
+                    "visible so CHECK_truncation reports a partial walk."
+                ),
             ),
             "ADVANCE_depth": {
                 "type": "IncrementVariable",
@@ -703,17 +728,16 @@ def build_execution_actions():
             "'Convert this Position Description into the PD template.', decodeUriComponent('%0A%0A'), "
             "'siteUrl: ', outputs('RESOLVE_effective')['siteUrl'], decodeUriComponent('%0A'), "
             "'templatePath: ', outputs('RESOLVE_effective')['templateFolderPath'], decodeUriComponent('%0A'), "
-            "'sourcePath: ', items('FOR_EACH_candidate')['positionFolderPath']"
+            "'sourcePath: ', items('FOR_EACH_candidate')['sourcePath']"
             ")}"
         ),
         {},
         (
             "OBSERVABLE STAGE 2. The exact prompt text, in its own action, so the "
             "run history answers 'what did the flow send to the agent'. "
-            "templatePath is a FOLDER by design - SKILL.md: 'a path to a folder "
-            "means every .docx in it... A template folder is the normal case.' "
-            "Paths are passed already resolved and server-relative, as the skill "
-            "expects."
+            "templatePath is a folder by design, while sourcePath is one concrete "
+            "file as required by the skill contract. Paths are already resolved "
+            "and server-relative."
         ),
     )
 
@@ -769,11 +793,11 @@ def build_execution_actions():
     # non-conforming reply as a named failure.
     extract_text = compose(
         (
-            "@{if(equals(string(outputs('CAPTURE_agent_response')), ''), '', "
-            "coalesce("
-            "string(coalesce(json(string(outputs('CAPTURE_agent_response')))?['text'], '')), "
-            "string(outputs('CAPTURE_agent_response'))"
-            "))}"
+            "@if(empty(coalesce(body('INVOKE_agent')?['text'], "
+            "body('INVOKE_agent')?['response'], body('INVOKE_agent')?['output'])), "
+            "string(outputs('CAPTURE_agent_response')), "
+            "string(coalesce(body('INVOKE_agent')?['text'], "
+            "body('INVOKE_agent')?['response'], body('INVOKE_agent')?['output'])))"
         ),
         {"CAPTURE_agent_response": ["Succeeded"]},
         (

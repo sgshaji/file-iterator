@@ -14,7 +14,7 @@ mechanically rather than left as a note in a README.
 Usage:
     python3 scripts/check_reference_untouched.py [base_ref]
 
-`base_ref` defaults to origin/main.
+`base_ref` defaults to the pull-request base, the pre-push commit, or HEAD^.
 """
 
 import os
@@ -50,8 +50,22 @@ def resolve_base(preferred):
     return None
 
 
+def default_base():
+    event = os.environ.get("GITHUB_EVENT_NAME", "")
+    if event == "push":
+        before = os.environ.get("GITHUB_EVENT_BEFORE", "")
+        if before and set(before) != {"0"}:
+            return before
+
+    base_ref = os.environ.get("GITHUB_BASE_REF", "")
+    if base_ref:
+        return "origin/" + base_ref
+
+    return "HEAD^"
+
+
 def main():
-    preferred = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
+    preferred = sys.argv[1] if len(sys.argv) > 1 else default_base()
     base = resolve_base(preferred)
 
     if base is None:

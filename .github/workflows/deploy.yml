@@ -56,8 +56,17 @@ jobs:
       - name: Verify solution shell matches source configuration
         run: python3 scripts/generate_solution_shell.py --check
 
+      - name: Verify processing flow matches the agent contract generator
+        run: python3 scripts/generate_processing_flow.py --check
+
+      - name: Verify rollback flow matches the agent result generator
+        run: python3 scripts/generate_rollback_flow.py --check
+
       - name: Validate flow definitions, columns and configuration
         run: python3 scripts/validate_solution.py
+
+      - name: Validate requirements R1-R7
+        run: python3 scripts/validate_requirements.py
 
   deploy:
     name: Pack and import

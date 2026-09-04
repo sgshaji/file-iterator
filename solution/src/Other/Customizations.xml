@@ -212,6 +212,14 @@
       <statecode>0</statecode>
       <statuscode>1</statuscode>
     </connectionreference>
+    <connectionreference connectionreferencelogicalname="fi_sharedagentnode">
+      <connectionreferencedisplayname>Agent (regeneration solution)</connectionreferencedisplayname>
+      <connectorid>/providers/Microsoft.PowerApps/apis/shared_agentnode</connectorid>
+      <iscustomizable>1</iscustomizable>
+      <promptingbehavior>0</promptingbehavior>
+      <statecode>0</statecode>
+      <statuscode>1</statuscode>
+    </connectionreference>
   </connectionreferences>
   <environmentvariabledefinitions>
     <environmentvariabledefinition schemaname="fi_SiteAddress">
@@ -271,9 +279,9 @@
       <displayname>Source Extensions</displayname>
       <type>100000000</type>
       <isrequired>1</isrequired>
-      <defaultvalue>[&quot;.docx&quot;,&quot;.doc&quot;,&quot;.pdf&quot;]</defaultvalue>
+      <defaultvalue>[&quot;.pdf&quot;,&quot;.docx&quot;]</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
-      <description>JSON array of lower-case extensions eligible for regeneration.</description>
+      <description>JSON array of lower-case extensions supported by the deployed PD Conversion Assistant skill. Legacy .doc files must be migrated to .docx before entering the source tree.</description>
     </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_BatchSize">
       <displayname>Batch Size</displayname>
@@ -282,14 +290,6 @@
       <defaultvalue>5</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
       <description>Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot.</description>
-    </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_ScheduleIntervalMinutes">
-      <displayname>Schedule Interval Minutes</displayname>
-      <type>100000001</type>
-      <isrequired>1</isrequired>
-      <defaultvalue>15</defaultvalue>
-      <introducedversion>1.0.0.0</introducedversion>
-      <description>Flow B recurrence. THROTTLE 2 OF 2. Together with BatchSize this paces both the 600 calls/min connector limit and agent capacity consumption. NOTE: Power Automate recurrence triggers do not accept an expression, so this value must be applied to the trigger by hand (or by the deployment pipeline) rather than being read at runtime. It is declared here so the intended value is versioned and reviewable.</description>
     </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_MaxAttempts">
       <displayname>Max Attempts</displayname>
@@ -323,22 +323,6 @@
       <introducedversion>1.0.0.0</introducedversion>
       <description>Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size.</description>
     </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_MinOutputSizeRatio">
-      <displayname>Min Output Size Ratio</displayname>
-      <type>100000001</type>
-      <isrequired>1</isrequired>
-      <defaultvalue>0.2</defaultvalue>
-      <introducedversion>1.0.0.0</introducedversion>
-      <description>Generated output smaller than this fraction of the source is rejected as truncated. Validation runs BEFORE any write.</description>
-    </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_MaxOutputSizeRatio">
-      <displayname>Max Output Size Ratio</displayname>
-      <type>100000001</type>
-      <isrequired>1</isrequired>
-      <defaultvalue>5.0</defaultvalue>
-      <introducedversion>1.0.0.0</introducedversion>
-      <description>Generated output larger than this multiple of the source is rejected as runaway.</description>
-    </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_DryRun">
       <displayname>Dry Run</displayname>
       <type>100000002</type>
@@ -347,14 +331,6 @@
       <introducedversion>1.0.0.0</introducedversion>
       <description>When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan.</description>
     </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_EnableConcurrency">
-      <displayname>Enable Concurrency</displayname>
-      <type>100000002</type>
-      <isrequired>1</isrequired>
-      <defaultvalue>0</defaultvalue>
-      <introducedversion>1.0.0.0</introducedversion>
-      <description>Off by default. Parallel invocation multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic. Enable only after measurement. NOTE: loop concurrency is a design-time runtimeConfiguration setting and cannot be bound to an expression, so this must be applied to the loop by hand. It is declared here so the intended value is versioned and reviewable.</description>
-    </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_NotificationRecipient">
       <displayname>Notification Recipient</displayname>
       <type>100000000</type>
@@ -362,12 +338,13 @@
       <introducedversion>1.0.0.0</introducedversion>
       <description>Recipient for approval requests, run summaries and failure alerts.</description>
     </environmentvariabledefinition>
-    <environmentvariabledefinition schemaname="fi_AgentEndpointName">
-      <displayname>Agent Endpoint Name</displayname>
+    <environmentvariabledefinition schemaname="fi_AgentId">
+      <displayname>Agent Schema Name</displayname>
       <type>100000000</type>
       <isrequired>1</isrequired>
+      <defaultvalue>cree1_pdconversionassistant_08zNQw</defaultvalue>
       <introducedversion>1.0.0.0</introducedversion>
-      <description>Identifier of the Copilot Studio agent action invoked per document. The single metered operation in the solution.</description>
+      <description>Schema name of the existing PD Conversion Assistant agent invoked through shared_agentnode/InvokeAgent. The agent is referenced, not copied into this solution.</description>
     </environmentvariabledefinition>
     <environmentvariabledefinition schemaname="fi_IndexListName">
       <displayname>Index List Name</displayname>

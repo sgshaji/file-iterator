@@ -31,7 +31,7 @@
               {
                 "name": "ExcludedFolders",
                 "type": "array",
-                "value": "@json(parameters('fi_ExcludedFolderNames (fi_ExcludedFolderNames)'))"
+                "value": "@json(toLower(parameters('fi_ExcludedFolderNames (fi_ExcludedFolderNames)')))"
               }
             ]
           },
@@ -124,7 +124,7 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "parameters/method": "GET",
-                  "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{items('For_each_folder')?['FolderUrl']}')?$expand=Folders,Files&$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/UniqueId,Files/Length,Files/TimeLastModified",
+                  "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{replace(items('For_each_folder')?['FolderUrl'],'''','''''')}')?$expand=Folders,Files&$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/UniqueId,Files/Length,Files/TimeLastModified",
                   "parameters/headers": { "Accept": "application/json;odata=verbose" }
                 },
                 "authentication": "@parameters('$authentication')"
@@ -263,7 +263,7 @@
                   "type": "Query",
                   "inputs": {
                     "from": "@body('Enumerate_direct_children')?['d']?['Folders']?['results']",
-                    "where": "@and(not(contains(variables('ExcludedFolders'), item()?['Name'])), not(equals(item()?['Name'], 'Forms')))"
+                    "where": "@and(not(contains(variables('ExcludedFolders'), toLower(item()?['Name']))), not(equals(toLower(item()?['Name']), 'forms')))"
                   },
                   "description": "Exclusions are applied BEFORE enqueueing, so an excluded subtree is never requested at all - a subtree of any size costs nothing. 'Forms' is SharePoint's own hidden folder present in every library."
                 },

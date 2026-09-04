@@ -28,7 +28,7 @@
           "inputs": {
             "host": {
               "connectionName": "shared_sharepointonline",
-              "operationId": "GetOnUpdatedItems",
+              "operationId": "GetOnUpdatedFileItems",
               "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
             },
             "parameters": {
@@ -77,30 +77,13 @@
                 ]
               }
             },
-            "Get_template_content": {
-              "runAfter": { "Init_PlannedCount": ["Succeeded"] },
-              "type": "OpenApiConnection",
-              "inputs": {
-                "host": {
-                  "connectionName": "shared_sharepointonline",
-                  "operationId": "GetFileContentByPath",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                },
-                "parameters": {
-                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "path": "@triggerOutputs()?['body/{FullPath}']",
-                  "inferContentType": false
-                },
-                "authentication": "@parameters('$authentication')"
-              }
-            },
             "Compose_template_fingerprint": {
-              "runAfter": { "Get_template_content": ["Succeeded"] },
+              "runAfter": { "Init_PlannedCount": ["Succeeded"] },
               "type": "Compose",
-              "inputs": "@{base64(body('Get_template_content'))}",
-              "description": "Fingerprint of the template's substantive content. A hash would be preferable; base64 of the content is used here because Power Automate has no built-in hash function and adding one would require a premium connector, violating R6. Compare fingerprints only, never store this in a report."
+              "inputs": "@{concat(coalesce(triggerOutputs()?['body/{UniqueId}'], string(triggerOutputs()?['body/ID'])), ':', coalesce(triggerOutputs()?['body/{VersionNumber}'], ''), ':', coalesce(triggerOutputs()?['body/Modified'], ''))}",
+              "description": "Compact, deterministic fingerprint of the published SharePoint file version. Storing the full base64 template would overflow the 255-character indexed metadata field; UniqueId, version and modified time fit and remain stable for duplicate trigger deliveries."
             },
-            "Get_last_completed_run_for_this_template": {
+            "Get_existing_run_for_this_template_fingerprint": {
               "runAfter": { "Compose_template_fingerprint": ["Succeeded"] },
               "type": "OpenApiConnection",
               "inputs": {
@@ -112,7 +95,7 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                  "$filter": "TemplateName eq '@{variables('TemplateName')}' and (Status eq 'Completed' or Status eq 'CompletedWithErrors')",
+                  "$filter": "TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status ne 'Cancelled' and Status ne 'RolledBack'",
                   "$orderby": "Created desc",
                   "$top": 1
                 },
@@ -120,20 +103,14 @@
               }
             },
             "GATE_2_COST_FILTER_F2_Has_the_template_materially_changed": {
-              "runAfter": { "Get_last_completed_run_for_this_template": ["Succeeded"] },
+              "runAfter": { "Get_existing_run_for_this_template_fingerprint": ["Succeeded"] },
               "type": "If",
               "expression": {
                 "and": [
-                  { "greater": [ "@length(body('Get_last_completed_run_for_this_template')?['value'])", 0 ] },
-                  {
-                    "equals": [
-                      "@first(body('Get_last_completed_run_for_this_template')?['value'])?['TemplateFingerprint']",
-                      "@outputs('Compose_template_fingerprint')"
-                    ]
-                  }
+                  { "greater": [ "@length(body('Get_existing_run_for_this_template_fingerprint')?['value'])", 0 ] }
                 ]
               },
-              "description": "COST FILTER F2. Not every publish changes the output - formatting tweaks, metadata edits and re-saves do not warrant regeneration. If the fingerprint is unchanged the run is abandoned with zero work items and zero cost. This gate alone eliminates the entire spurious-trigger class, which is otherwise the largest single source of wasted spend.",
+              "description": "COST FILTER F2 and trigger idempotency. Any non-cancelled run with the same template fingerprint already owns this work, whether it is planned, active or complete. Duplicate trigger deliveries therefore create zero work items and zero agent calls.",
               "actions": {
                 "Terminate_no_material_change": {
                   "runAfter": {},
@@ -177,8 +154,17 @@
                     "foreach": "@body('COST_FILTER_F1_Get_affected_documents')?['value']",
                     "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
                     "actions": {
-                      "Compose_target_url": {
+                      "Find_preferred_competitor": {
                         "runAfter": {},
+                        "type": "Query",
+                        "inputs": {
+                          "from": "@body('COST_FILTER_F1_Get_affected_documents')?['value']",
+                          "where": "@and(equals(item()?['ParentFolderUrl'], items('For_each_candidate')?['ParentFolderUrl']), equals(toLower(substring(item()?['FileName'], 0, lastIndexOf(item()?['FileName'], '.'))), toLower(substring(items('For_each_candidate')?['FileName'], 0, lastIndexOf(items('For_each_candidate')?['FileName'], '.')))), not(equals(item()?['UniqueId'], items('For_each_candidate')?['UniqueId'])), or(and(equals(items('For_each_candidate')?['Extension'], '.pdf'), equals(item()?['Extension'], '.docx'), greater(ticks(item()?['TimeLastModified']), ticks(items('For_each_candidate')?['TimeLastModified']))), and(equals(items('For_each_candidate')?['Extension'], '.docx'), equals(item()?['Extension'], '.pdf'), greaterOrEquals(ticks(item()?['TimeLastModified']), ticks(items('For_each_candidate')?['TimeLastModified'])))))"
+                        },
+                        "description": "One real document may exist as both PDF and DOCX. Match the deployed skill's preference exactly: PDF wins unless the DOCX is newer. A candidate with a preferred competitor is not queued, preventing a paid call whose only possible result is another-format-preferred."
+                      },
+                      "Compose_target_url": {
+                        "runAfter": { "Find_preferred_competitor": ["Succeeded"] },
                         "type": "Compose",
                         "inputs": "@{items('For_each_candidate')?['ParentFolderUrl']}/@{parameters('fi_OutputFolderName (fi_OutputFolderName)')}/@{replace(items('For_each_candidate')?['FileName'], items('For_each_candidate')?['Extension'], '')} - AD.docx",
                         "description": "Output path derived from the source. The output folder sits alongside the source, matching the existing tree convention."
@@ -194,8 +180,8 @@
                           },
                           "parameters": {
                             "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                            "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                            "$filter": "DocumentRole eq 'Output' and TemplateName eq '@{variables('TemplateName')}'",
+                            "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
+                            "$filter": "SourceUniqueId eq '@{items('For_each_candidate')?['UniqueId']}' and TemplateName eq '@{replace(variables('TemplateName'),'''','''''')}' and TemplateFingerprint eq '@{outputs('Compose_template_fingerprint')}' and Status eq 'Succeeded'",
                             "$top": 1
                           },
                           "authentication": "@parameters('$authentication')"
@@ -205,17 +191,22 @@
                         "runAfter": { "Look_up_existing_output": ["Succeeded"] },
                         "type": "If",
                         "expression": {
-                          "and": [
-                            { "greater": [ "@length(body('Look_up_existing_output')?['value'])", 0 ] },
+                          "or": [
+                            { "greater": [ "@length(body('Find_preferred_competitor'))", 0 ] },
                             {
-                              "equals": [
-                                "@first(body('Look_up_existing_output')?['value'])?['TemplateFingerprint']",
-                                "@outputs('Compose_template_fingerprint')"
+                              "and": [
+                                { "greater": [ "@length(body('Look_up_existing_output')?['value'])", 0 ] },
+                                {
+                                  "equals": [
+                                    "@first(body('Look_up_existing_output')?['value'])?['TemplateFingerprint']",
+                                    "@outputs('Compose_template_fingerprint')"
+                                  ]
+                                }
                               ]
                             }
                           ]
                         },
-                        "description": "COST FILTER F3. If the existing output already records this template fingerprint it is current and needs no agent call. This is what makes a re-run after a partial failure cost only the outstanding work, and what makes the whole job idempotent.",
+                        "description": "COST FILTERS F0/F3. Skip a non-preferred member of a PDF/DOCX pair before spending, and skip a preferred source whose output for this exact source/template pair already records the current fingerprint.",
                         "actions": {},
                         "else": {
                           "actions": {
@@ -274,6 +265,7 @@
                         "item/RunId": "@variables('RunId')",
                         "item/TemplateName": "@variables('TemplateName')",
                         "item/TemplateFingerprint": "@outputs('Compose_template_fingerprint')",
+                        "item/TemplateUrl": "@triggerOutputs()?['body/{FullPath}']",
                         "item/TemplateVersion": "@{triggerOutputs()?['body/{VersionNumber}']}",
                         "item/Status/Value": "AwaitingApproval",
                         "item/PlannedCount": "@variables('PlannedCount')",
@@ -311,9 +303,9 @@
                             "item/SourceUniqueId": "@items('For_each_affected_document')?['SourceUniqueId']",
                             "item/SourceUrl": "@items('For_each_affected_document')?['SourceUrl']",
                             "item/SourceSizeBytes": "@items('For_each_affected_document')?['SourceSizeBytes']",
-                            "item/TargetUrl": "@items('For_each_affected_document')?['TargetUrl']",
                             "item/TemplateName": "@variables('TemplateName')",
                             "item/TemplateFingerprint": "@outputs('Compose_template_fingerprint')",
+                            "item/TemplateUrl": "@triggerOutputs()?['body/{FullPath}']",
                             "item/Status/Value": "Pending",
                             "item/AttemptCount": 0
                           },
