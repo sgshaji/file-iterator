@@ -1,0 +1,154 @@
+{
+  "//": [
+    "Environment variables for the PD Conversion Harness.",
+    "",
+    "Every value here is something the reference flow hard-coded into its action",
+    "inputs (see docs/Reference-Solution-Analysis.md, problem P8). The reference",
+    "flow points at the demo tenant; production is a different tenant, site,",
+    "library and folder, so there was no way to deploy it without editing the",
+    "flow. Parameterising these is what makes the harness deployable.",
+    "",
+    "Defaults are deliberately EMPTY for anything environment-specific. A blank",
+    "default fails visibly at import or at the input gate; a demo-tenant default",
+    "would silently run against the wrong site.",
+    "",
+    "Values marked CONTRACT must agree with the pd-ad-conversion skill's own",
+    "constants in pd_tools.py. scripts/validate_harness.py asserts this. If they",
+    "drift, the flow enqueues work the skill silently skips - which costs a",
+    "metered agent call per skipped document and reports nothing."
+  ],
+  "publisher": {
+    "uniqueName": "pdharness",
+    "displayName": "PD Conversion Harness",
+    "customizationPrefix": "pdh",
+    "//": "Deliberate publisher. The reference solution used 'CDS Default Publisher' (prefix cr50b), which is the maker-portal default rather than a choice."
+  },
+  "environmentVariables": [
+    {
+      "schemaName": "pdh_SiteUrl",
+      "displayName": "Site URL",
+      "type": "String",
+      "required": true,
+      "defaultValue": "",
+      "example": "https://nhorgau.sharepoint.com/sites/pc",
+      "usedBy": ["harness"],
+      "description": "Absolute site URL. Passed to the agent as siteUrl and used as the 'dataset' parameter on every SharePoint action. Reference flow hard-coded the demo tenant here."
+    },
+    {
+      "schemaName": "pdh_LibraryUrlName",
+      "displayName": "Library URL Name",
+      "type": "String",
+      "required": true,
+      "defaultValue": "",
+      "example": "wfpp",
+      "usedBy": ["harness"],
+      "description": "The library's URL name, not its display name. The investigation report records this as a recurring trap: 'Documents' vs 'Shared Documents', and on the customer site the library is 'wfpp' while the folder inside it is confusingly named 'PD-AD Library'."
+    },
+    {
+      "schemaName": "pdh_SourceRootPath",
+      "displayName": "Source Root Path",
+      "type": "String",
+      "required": true,
+      "defaultValue": "",
+      "example": "/sites/pc/wfpp/PD-AD Library/Position Descriptions",
+      "usedBy": ["harness"],
+      "description": "Server-relative path of the folder holding position folders. The walk starts here. Type plain spaces, never %20: Power Automate encodes the Uri field, so a pre-entered %20 becomes %2520 and the request silently loses its query string."
+    },
+    {
+      "schemaName": "pdh_TemplateFolderPath",
+      "displayName": "Template Folder Path",
+      "type": "String",
+      "required": true,
+      "defaultValue": "",
+      "example": "/sites/pc/wfpp/PD-AD Library/Templates",
+      "usedBy": ["harness"],
+      "description": "Server-relative path of the FOLDER of templates, passed to the agent as templatePath. SKILL.md section 'Inputs': 'a path to a folder means every .docx in it, each producing its own output. A template folder is the normal case.' Passing a folder is correct, not a defect. MUST NOT overlap SourceRootPath."
+    },
+    {
+      "schemaName": "pdh_ExcludedFolderNames",
+      "displayName": "Excluded Folder Names",
+      "type": "String",
+      "required": true,
+      "defaultValue": "Archive,AD Documents",
+      "usedBy": ["harness"],
+      "description": "CONTRACT. Comma-separated folder names never descended into. Must equal pd_tools.py OUTPUT_FOLDERS = (ARCHIVE_FOLDER_NAME, AD_FOLDER_NAME) = ('Archive', 'AD Documents'). These hold the skill's own output; descending into them would feed the agent its own previous results. Investigation report R4 requires the same exclusions."
+    },
+    {
+      "schemaName": "pdh_SourceExtensions",
+      "displayName": "Source Extensions",
+      "type": "String",
+      "required": true,
+      "defaultValue": ".pdf,.docx",
+      "usedBy": ["harness"],
+      "description": "CONTRACT. Must equal pd_tools.py CONVERTIBLE_EXT = ('.pdf', '.docx'). NOTE: the investigation report's R3 also lists .doc, but the skill does not accept it - a .doc source is reported as not convertible. Adding .doc here would spend an agent call to be told that. Raised as an open question rather than silently reconciled."
+    },
+    {
+      "schemaName": "pdh_MaxDocuments",
+      "displayName": "Max Documents Per Run",
+      "type": "Number",
+      "required": true,
+      "defaultValue": 1,
+      "usedBy": ["harness"],
+      "description": "Hard cap on agent invocations in a single run. THE PRIMARY COST CONTROL. Defaults to 1 so the first run after any deployment converts exactly one document and can be inspected. Raise only after measuring what one conversion costs and how long it takes."
+    },
+    {
+      "schemaName": "pdh_DryRun",
+      "displayName": "Dry Run",
+      "type": "Boolean",
+      "required": true,
+      "defaultValue": true,
+      "usedBy": ["harness"],
+      "description": "When true the harness enumerates, filters and emits the full plan, then stops WITHOUT invoking the agent. Zero metered cost. Defaults to true so a fresh deployment cannot convert documents before someone has read a plan."
+    },
+    {
+      "schemaName": "pdh_MaxFolderDepth",
+      "displayName": "Max Folder Depth",
+      "type": "Number",
+      "required": true,
+      "defaultValue": 8,
+      "usedBy": ["harness"],
+      "description": "Depth limit for the breadth-first walk. A guard against an unexpectedly deep or cyclic tree turning one run into an unbounded one. Investigation report R2 requires no assumption about depth, so this is a safety ceiling rather than an expected limit; the plan reports whether it was hit."
+    },
+    {
+      "schemaName": "pdh_MaxFoldersScanned",
+      "displayName": "Max Folders Scanned",
+      "type": "Number",
+      "required": true,
+      "defaultValue": 500,
+      "usedBy": ["harness"],
+      "description": "Ceiling on folders enumerated per run. Bounds both run duration and SharePoint call count against the connector's 600-calls-per-minute limit. The walk reports truncation explicitly rather than silently returning a short list."
+    },
+    {
+      "schemaName": "pdh_AgentId",
+      "displayName": "Agent ID",
+      "type": "String",
+      "required": true,
+      "defaultValue": "cree1_pdconversionassistant_08zNQw",
+      "usedBy": ["harness"],
+      "description": "REUSED EXISTING AGENT - 'PD Conversion Assistant'. Schema name, not a record GUID, which is why it is portable across environments. Evidence it is an environment resource rather than ours: it is not a RootComponent of the reference solution, customizations.xml has no <bots> element, and its prefix (cree1_) differs from that solution's publisher prefix (cr50b). Defaulted rather than blank because it is the one value that is NOT environment-specific."
+    },
+    {
+      "schemaName": "pdh_RunLabel",
+      "displayName": "Run Label",
+      "type": "String",
+      "required": false,
+      "defaultValue": "",
+      "usedBy": ["harness"],
+      "description": "Free-text label stamped on the run output, for correlating a run with whatever prompted it. Purely observational; nothing branches on it."
+    }
+  ],
+  "connectionReferences": [
+    {
+      "schemaName": "pdh_sharedsharepointonline",
+      "displayName": "SharePoint (PD conversion harness)",
+      "connectorId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+      "description": "Standard SharePoint connector. Used for the folder walk and for reading file properties. Standard licensing only - no premium connector anywhere in the harness (investigation report R6)."
+    },
+    {
+      "schemaName": "pdh_sharedagentnode",
+      "displayName": "Agent (PD conversion harness)",
+      "connectorId": "/providers/Microsoft.PowerApps/apis/shared_agentnode",
+      "description": "Invokes the Copilot Studio agent via the InvokeAgent operation. This is the mechanism the reference flow uses, confirmed from its exported definition rather than guessed."
+    }
+  ]
+}
