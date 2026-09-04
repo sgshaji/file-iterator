@@ -1,19 +1,29 @@
 {
-  "$comment": "FLOW D - Rollback Regeneration Run. Restores the archived previous version of every output written by a run. Rarely used, but it is the reason Flow B archives before overwriting: without it, recovering from a bad run means regenerating everything again, paying a second full run of agent calls on top of the damage. See docs/Template-Regeneration-Solution-Design.md section 8.",
+  "$comment": "FLOW D1 - Start rollback. Validates LIFO eligibility and locks a terminal run; D2 restores manifests in bounded pages.",
   "properties": {
     "connectionReferences": {
       "shared_sharepointonline": {
         "runtimeSource": "embedded",
-        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
-        "api": { "name": "shared_sharepointonline" }
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
       }
     },
     "definition": {
       "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
       "contentVersion": "1.0.0.0",
       "parameters": {
-        "$connections": { "defaultValue": {}, "type": "Object" },
-        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
       },
       "triggers": {
         "manual": {
@@ -36,7 +46,10 @@
                   "description": "Deliberate friction. This flow overwrites current outputs with archived versions."
                 }
               },
-              "required": ["text", "text_1"]
+              "required": [
+                "text",
+                "text_1"
+              ]
             }
           }
         }
@@ -46,7 +59,12 @@
           "runAfter": {},
           "type": "If",
           "expression": {
-            "not": { "equals": [ "@toUpper(trim(triggerBody()?['text_1']))", "ROLLBACK" ] }
+            "not": {
+              "equals": [
+                "@toUpper(trim(triggerBody()?['text_1']))",
+                "ROLLBACK"
+              ]
+            }
           },
           "actions": {
             "Terminate_not_confirmed": {
@@ -61,162 +79,16 @@
               }
             }
           },
-          "else": { "actions": {} }
-        },
-        "Get_succeeded_items_for_run": {
-          "runAfter": { "Require_explicit_confirmation": ["Succeeded"] },
-          "type": "OpenApiConnection",
-          "inputs": {
-            "host": {
-              "connectionName": "shared_sharepointonline",
-              "operationId": "GetItems",
-              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-            },
-            "parameters": {
-              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-              "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-              "$filter": "RunId eq '@{trim(triggerBody()?['text'])}' and Status eq 'Succeeded' and ArchiveUrl ne null",
-              "$top": 5000
-            },
-            "authentication": "@parameters('$authentication')"
-          },
-          "description": "Only items that actually wrote an output AND recorded an archive can be rolled back. Items with no ArchiveUrl were first-time generations with no prior version; those are reported, not restored."
-        },
-        "For_each_item_to_restore": {
-          "runAfter": { "Get_succeeded_items_for_run": ["Succeeded"] },
-          "type": "Foreach",
-          "foreach": "@body('Get_succeeded_items_for_run')?['value']",
-          "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
-          "actions": {
-            "Restore_archived_version": {
-              "runAfter": {},
-              "type": "Scope",
-              "actions": {
-                "Read_archived_file": {
-                  "runAfter": {},
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "GetFileContentByPath",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "path": "@items('For_each_item_to_restore')?['ArchiveUrl']",
-                      "inferContentType": false
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                },
-                "Overwrite_output_with_archived_version": {
-                  "runAfter": { "Read_archived_file": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "CreateFile",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "folderPath": "@{substring(items('For_each_item_to_restore')?['TargetUrl'], 0, lastIndexOf(items('For_each_item_to_restore')?['TargetUrl'], '/'))}",
-                      "name": "@{last(split(items('For_each_item_to_restore')?['TargetUrl'], '/'))}",
-                      "body": "@body('Read_archived_file')"
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                },
-                "Clear_output_fingerprint": {
-                  "runAfter": { "Overwrite_output_with_archived_version": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "GetItems",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                      "$filter": "ServerRelativeUrl eq '@{items('For_each_item_to_restore')?['TargetUrl']}'",
-                      "$top": 1
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  },
-                  "description": "The restored output no longer matches the new template, so its stored fingerprint must be invalidated. Otherwise cost filter F3 would skip it on the next run and the document would stay permanently stale - a silent, expensive-to-find bug."
-                },
-                "Reset_index_fingerprint": {
-                  "runAfter": { "Clear_output_fingerprint": ["Succeeded"] },
-                  "type": "If",
-                  "expression": { "greater": [ "@length(body('Clear_output_fingerprint')?['value'])", 0 ] },
-                  "actions": {
-                    "Patch_index_row": {
-                      "runAfter": {},
-                      "type": "OpenApiConnection",
-                      "inputs": {
-                        "host": {
-                          "connectionName": "shared_sharepointonline",
-                          "operationId": "PatchItem",
-                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                        },
-                        "parameters": {
-                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                          "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
-                          "id": "@first(body('Clear_output_fingerprint')?['value'])?['ID']",
-                          "item/TemplateFingerprint": "",
-                          "item/IndexedAt": "@utcNow()"
-                        },
-                        "authentication": "@parameters('$authentication')"
-                      }
-                    }
-                  },
-                  "else": { "actions": {} }
-                },
-                "Mark_item_rolled_back": {
-                  "runAfter": { "Reset_index_fingerprint": ["Succeeded"] },
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_sharepointonline",
-                      "operationId": "PatchItem",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                    },
-                    "parameters": {
-                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                      "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                      "id": "@items('For_each_item_to_restore')?['ID']",
-                      "item/Status/Value": "Skipped",
-                      "item/ErrorMessage": "Rolled back to archived version @{items('For_each_item_to_restore')?['ArchiveUrl']}"
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                }
-              }
-            },
-            "Record_restore_failure": {
-              "runAfter": { "Restore_archived_version": ["Failed", "TimedOut"] },
-              "type": "OpenApiConnection",
-              "inputs": {
-                "host": {
-                  "connectionName": "shared_sharepointonline",
-                  "operationId": "PatchItem",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
-                },
-                "parameters": {
-                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-                  "table": "@parameters('fi_WorkItemListName (fi_WorkItemListName)')",
-                  "id": "@items('For_each_item_to_restore')?['ID']",
-                  "item/ErrorMessage": "ROLLBACK FAILED: @{take(string(result('Restore_archived_version')), 3000)}"
-                },
-                "authentication": "@parameters('$authentication')"
-              },
-              "description": "One failed restore must not abort the rollback of the rest."
-            }
+          "else": {
+            "actions": {}
           }
         },
-        "Get_run_record": {
-          "runAfter": { "For_each_item_to_restore": ["Succeeded", "Failed"] },
+        "Get_run_to_lock": {
+          "runAfter": {
+            "Require_explicit_confirmation": [
+              "Succeeded"
+            ]
+          },
           "type": "OpenApiConnection",
           "inputs": {
             "host": {
@@ -227,18 +99,60 @@
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
               "table": "@parameters('fi_RunListName (fi_RunListName)')",
-              "$filter": "RunId eq '@{trim(triggerBody()?['text'])}'",
+              "$filter": "RunId eq '@{replace(trim(triggerBody()?['text']),'''','''''')}' and IsDryRun eq 0 and StartedAt ne null and (Status eq 'Completed' or Status eq 'CompletedWithErrors')",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"
           }
         },
-        "Mark_run_rolled_back": {
-          "runAfter": { "Get_run_record": ["Succeeded"] },
+        "Get_newer_live_run": {
+          "runAfter": {
+            "Get_run_to_lock": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_RunListName (fi_RunListName)')",
+              "$filter": "StartedAt gt datetime'@{formatDateTime(first(body('Get_run_to_lock')?['value'])?['StartedAt'], 'yyyy-MM-ddTHH:mm:ssZ')}' and IsDryRun eq 0 and Status ne 'Cancelled' and Status ne 'RolledBack'",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "Conservative LIFO guard. A newer live run may own the current output, so older runs must be rolled back only after it."
+        },
+        "Validate_terminal_run": {
+          "runAfter": {
+            "Get_newer_live_run": [
+              "Succeeded"
+            ]
+          },
           "type": "If",
-          "expression": { "greater": [ "@length(body('Get_run_record')?['value'])", 0 ] },
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@length(body('Get_run_to_lock')?['value'])",
+                  1
+                ]
+              },
+              {
+                "equals": [
+                  "@length(body('Get_newer_live_run')?['value'])",
+                  0
+                ]
+              }
+            ]
+          },
           "actions": {
-            "Patch_run": {
+            "Lock_run_for_rollback": {
               "runAfter": {},
               "type": "OpenApiConnection",
               "inputs": {
@@ -250,17 +164,29 @@
                 "parameters": {
                   "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
                   "table": "@parameters('fi_RunListName (fi_RunListName)')",
-                  "id": "@first(body('Get_run_record')?['value'])?['ID']",
-                  "item/Status/Value": "RolledBack",
-                  "item/CompletedAt": "@utcNow()",
-                  "item/SummaryMessage": "Rolled back @{length(body('Get_succeeded_items_for_run')?['value'])} outputs to their archived versions."
+                  "id": "@first(body('Get_run_to_lock')?['value'])?['ID']",
+                  "item/Status/Value": "RollbackInProgress",
+                  "item/RollbackCursorId": 0
                 },
                 "authentication": "@parameters('$authentication')"
-              },
-              "description": "A RolledBack run is not Completed, so its fingerprint is not used by cost filter F2. Republishing the template will therefore correctly plan a fresh run."
+              }
             }
           },
-          "else": { "actions": {} }
+          "else": {
+            "actions": {
+              "Terminate_run_not_terminal": {
+                "runAfter": {},
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "RunNotRollbackEligible",
+                    "message": "Only Completed or CompletedWithErrors runs can be rolled back, and newer live runs must be rolled back first."
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "outputs": {}

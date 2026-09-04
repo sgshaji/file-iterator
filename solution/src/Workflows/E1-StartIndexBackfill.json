@@ -56,13 +56,13 @@
             },
             "parameters": {
               "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
-              "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
-              "$filter": "Status eq 'Pending' or Status eq 'InProgress'",
+              "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+              "$filter": "Status eq 'Seeding' or Status eq 'Queued' or Status eq 'Running' or Status eq 'Reconciling'",
               "$top": 1
             },
             "authentication": "@parameters('$authentication')"
           },
-          "description": "A second concurrent walk would duplicate index writes and waste SharePoint calls. Refuse to start if one is already in flight."
+          "description": "A second concurrent walk or reconciliation would duplicate index writes and invalidate stale-row detection. Refuse while an IndexWalkRun is active."
         },
         "Refuse_if_a_walk_is_already_running": {
           "runAfter": { "Check_for_an_unfinished_walk": ["Succeeded"] },
@@ -88,8 +88,48 @@
           },
           "else": {
             "actions": {
-              "Seed_frontier_with_root_folder": {
+              "Create_walk_run": {
                 "runAfter": {},
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PostItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                    "item/Title": "@variables('WalkRunId')",
+                    "item/WalkRunId": "@variables('WalkRunId')",
+                    "item/Status/Value": "Seeding",
+                    "item/ReconciliationCursorId": 0,
+                    "item/StartedAt": "@utcNow()",
+                    "item/ErrorMessage": ""
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Get_root_folder_identity": {
+                "runAfter": { "Create_walk_run": ["Succeeded"] },
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "HttpRequest",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "parameters/method": "GET",
+                    "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{replace(parameters('fi_RootFolderPath (fi_RootFolderPath)'),'''','''''')}')?$select=UniqueId",
+                    "parameters/headers": { "Accept": "application/json;odata=verbose" }
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Seed_frontier_with_root_folder": {
+                "runAfter": { "Get_root_folder_identity": ["Succeeded"] },
                 "type": "OpenApiConnection",
                 "inputs": {
                   "host": {
@@ -103,12 +143,73 @@
                     "item/Title": "@variables('WalkRunId')",
                     "item/WalkRunId": "@variables('WalkRunId')",
                     "item/FolderUrl": "@parameters('fi_RootFolderPath (fi_RootFolderPath)')",
+                    "item/FolderUniqueId": "@body('Get_root_folder_identity')?['d']?['UniqueId']",
                     "item/Depth": 0,
-                    "item/Status/Value": "Pending"
+                    "item/Status/Value": "Pending",
+                    "item/EnumerationPhase/Value": "Folders",
+                    "item/NextPageUri": ""
                   },
                   "authentication": "@parameters('$authentication')"
                 },
                 "description": "One row. Flow E2 expands it breadth-first from here."
+              },
+              "Mark_walk_running": {
+                "runAfter": { "Seed_frontier_with_root_folder": ["Succeeded"] },
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PatchItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                    "id": "@body('Create_walk_run')?['ID']",
+                    "item/Status/Value": "Running"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Record_root_identity_failure": {
+                "runAfter": { "Get_root_folder_identity": ["Failed", "TimedOut"] },
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PatchItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                    "id": "@body('Create_walk_run')?['ID']",
+                    "item/Status/Value": "CompletedWithErrors",
+                    "item/CompletedAt": "@utcNow()",
+                    "item/ErrorMessage": "Root folder identity could not be resolved; no frontier was seeded."
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Record_frontier_seed_failure": {
+                "runAfter": { "Seed_frontier_with_root_folder": ["Failed", "TimedOut"] },
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PatchItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                    "id": "@body('Create_walk_run')?['ID']",
+                    "item/Status/Value": "CompletedWithErrors",
+                    "item/CompletedAt": "@utcNow()",
+                    "item/ErrorMessage": "Root frontier row could not be created."
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
               }
             }
           }

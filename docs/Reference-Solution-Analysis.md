@@ -218,18 +218,15 @@ position and pay for a guaranteed skip every time. The harness therefore iterate
 
 ---
 
-## 8. One unreconciled discrepancy
+## 8. Resolved format boundary
 
-The investigation report's requirement R3 includes `.doc`. The skill's
-`CONVERTIBLE_EXT` is `.pdf` and `.docx` only.
-
-A legacy `.doc` source will be enqueued by any flow honouring R3, and reported
-not-convertible **after** an agent call has been spent.
-
-This is surfaced rather than silently patched, because both plausible fixes are
-someone else's decision: widen `CONVERTIBLE_EXT` in the skill, or narrow R3 and
-handle `.doc` by a separate conversion step. The harness currently follows the
-skill, since that is what actually executes.
+The investigation's original enumeration scope included `.doc`, but the deployed
+agent's `CONVERTIBLE_EXT` is `.pdf` and `.docx` only. The implementation therefore
+defines automated regeneration scope as `.pdf`/`.docx` and requires legacy `.doc`
+files to be migrated before indexing. This is deliberate: queueing `.doc` would
+spend a metered call only for the agent to reject it. Adding `.doc` later requires
+an independently verified conversion path and a corresponding agent-contract
+change; it is not represented as supported until then.
 
 ---
 

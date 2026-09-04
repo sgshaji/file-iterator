@@ -1,89 +1,92 @@
 # file-iterator
 
-Template-triggered document regeneration in SharePoint, using a Copilot Studio
-agent as a per-document worker and Power Automate as the orchestrator — built on
-top of an investigation into enumerating files in a library past the 5,000-item
-list view threshold.
+Template-triggered document regeneration in a SharePoint library above the
+5,000-item list-view threshold.
 
-## The requirement
+The production source is [`solution/`](solution/). It reuses the existing PD
+Conversion Assistant agent and gives Power Automate responsibility for
+enumeration, planning, approval, bounded execution, accounting and rollback.
 
-A Copilot Studio agent fills templates and generates documents. When a template
-changes, every document produced from that template must be regenerated in the
-new format. The flow finds the affected documents and calls the agent once per
-document.
+## Current requirement
 
-Two things make this harder than it sounds:
+When a template is explicitly published, regenerate every affected logical
+document under the configured source root:
 
-1. The library is past the list view threshold, so no recursive-by-path method
-   can enumerate it. That is what the investigation report solves.
-2. The agent call is metered and the write is destructive. A naive "loop over
-   everything" flow is both expensive and unrecoverable. That is what the
-   solution design solves.
+- enumerate at any folder depth without recursive SharePoint queries;
+- exclude `Archive` and `AD Documents` before descending;
+- support `.pdf` and `.docx`, exactly matching the deployed agent contract;
+- invoke the agent at most once for the selected member of a PDF/DOCX pair;
+- persist all work so runs resume without duplicating paid calls;
+- require an audited approval before execution;
+- preserve and restore every displaced file;
+- use SharePoint plus the existing agent connector only—no premium custom
+  connector and no Entra application registration.
 
-## Contents
+Legacy `.doc` files are an explicit migration prerequisite. They must be
+converted to `.docx` before indexing; the flow never spends a metered call on a
+format the deployed skill rejects.
 
-### Design and investigation
+## Authoritative implementation
 
-| Document | What it is |
+| Stage | Flow | Responsibility |
+|---|---|---|
+| Plan | A1 | Accept an explicit template publication and create a durable `Planning` run |
+| Plan | A2 | Page through `DocumentIndex`, select one preferred source per logical document, and persist work items |
+| Approve | A3 | Apply the human `ApprovalDecision` recorded on the SharePoint run item |
+| Execute | B | Claim a bounded batch and invoke `shared_agentnode/InvokeAgent` once per work item |
+| Finalize | C | Aggregate terminal outcomes in bounded pages and close the run |
+| Roll back | D1 | Validate LIFO eligibility and lock a terminal run |
+| Roll back | D2 | Restore a bounded page of agent archive manifests |
+| Index | E1 | Start a complete index walk |
+| Index | E2 | Drain the direct-children frontier and reconcile stale rows |
+| Delta | F | Upsert file create/modify/rename events |
+| Delta | F2 | Exclude deleted files and queue reconciliation for deleted folders |
+| Delta | F3 | Queue reconciliation for folder rename/move events |
+
+Five SharePoint lists hold durable state:
+
+- `DocumentIndex`
+- `RegenerationRun`
+- `RegenerationWorkItem`
+- `WalkFrontier`
+- `IndexWalkRun`
+
+See [`solution/README.md`](solution/README.md) for configuration, deployment and
+tenant bring-up.
+
+## Other repository areas
+
+| Path | Purpose |
 |---|---|
-| [docs/Template-Regeneration-Solution-Design.md](docs/Template-Regeneration-Solution-Design.md) | **The current design.** Cost-first architecture: index, plan, queue, batch, archive, rollback. Start here. |
-| [docs/Reference-Solution-Analysis.md](docs/Reference-Solution-Analysis.md) | What the deployed solution actually contains, reverse-engineered from the export: the agent is an *environment resource the flow references*, not a component it owns; plus the eleven confirmed defects the harness is built to avoid — and one I withdrew after the skill contract proved me wrong. |
-| [docs/SharePoint-Large-Library-File-Enumeration-Investigation.md](docs/SharePoint-Large-Library-File-Enumeration-Investigation.md) | The prior investigation. Source of every platform constraint the design obeys — the threshold behaviour, the 16 MB action cap, the 600 calls/min connector limit, and the verified folder-walk method. |
-| [docs/Power Automate - SharePoint Folder Files - Customer Test Guide.docx](<docs/Power Automate - SharePoint Folder Files - Customer Test Guide.docx>) | **Superseded (v1).** Teaches a method the investigation report itself records as throttling on a large library. Kept for history only; do not hand it to a customer. |
+| [`reference-solution/`](reference-solution/) | Read-only export proving the existing agent schema name, invocation operation and skill contract |
+| [`harness/`](harness/) | Diagnostic single-run fixture; useful for first-call inspection, not the production orchestrator |
+| [`provisioning/`](provisioning/) | Canonical list schema plus generated PnP template |
+| [`scripts/`](scripts/) | Flow generators, drift checks and R1-R7 semantic validation |
+| [`docs/`](docs/) | Investigation, reference analysis and architecture rationale |
 
-### Implementation
+## Validation
 
-| Path | What it is |
-|---|---|
-| [harness/](harness/) | **The current implementation.** A harness for the existing PD Conversion Assistant agent: direct-children folder walk, an explicit plan, a dry-run cost gate, one agent call per position folder, and a terminal status derived from what the agent actually returned. **[Read harness/README.md](harness/README.md) for verification status and bring-up order.** |
-| [reference-solution/](reference-solution/) | **Read-only.** The exported Power Platform solution for the deployed agent. The source of truth for the agent's schema name, its invocation mechanism and the `pd-ad-conversion` skill contract. Replaced only by re-exporting; CI enforces this. |
-| [solution/](solution/) | **Superseded.** Earlier seven-flow design, built before the reference export existed. Retained as the scale-out design. [Verification status](solution/README.md). |
-| [provisioning/lists.json](provisioning/lists.json) | Single source of truth for the four supporting SharePoint lists. |
-| [provisioning/pnp-provisioning-template.xml](provisioning/pnp-provisioning-template.xml) | Generated from `lists.json`; applied with `Invoke-PnPSiteTemplate`. |
-| [scripts/](scripts/) | Generators and the static validator that CI runs. |
-| [.github/workflows/](.github/workflows/) | PR validation and packing; manual, environment-gated deployment. |
-
-## How the pieces fit
-
-```
-template changed
-      │
-      ▼
-   Flow A ── plans the run, applies the cost filters, asks for approval
-      │       (makes zero agent calls)
-      ▼
-  work queue
-      │
-      ▼
-   Flow B ── per document: read → agent → validate → archive → write
-      │       (the only flow that spends money or changes documents)
-      ▼
-   Flow C ── closes the run, reports what it cost
-
-   Flows E1/E2 build the document index by walking folders;
-   Flow F keeps it current. Flow D rolls a run back from the archive.
+```powershell
+python scripts\generate_planning_flows.py --check
+python scripts\generate_processing_flow.py --check
+python scripts\generate_finalization_flow.py --check
+python scripts\generate_rollback_flow.py --check
+python scripts\generate_folder_update_flow.py --check
+python scripts\generate_solution_shell.py --check
+python scripts\generate_pnp_template.py --check
+python scripts\generate_deployment_settings.py --check
+python scripts\validate_solution.py
+python scripts\validate_requirements.py
+python scripts\validate_harness.py
+python scripts\check_reference_untouched.py
 ```
 
-The governing principle: **the agent call is the only expensive operation, so
-never invoke the agent for a document that does not need it, and never invoke it
-twice.** Everything else in the design exists to serve that.
+`validate_requirements.py` maps implementation invariants to R1-R7. CI also
+packs both Power Platform sources with `pac solution pack`.
 
-## Working on this repository
+## Completion boundary
 
-```bash
-python3 scripts/validate_solution.py              # flows, columns, config
-python3 scripts/generate_pnp_template.py --check  # provisioning drift
-python3 scripts/generate_deployment_settings.py --check
-```
-
-`provisioning/pnp-provisioning-template.xml` and
-`solution/config/deployment-settings.*.json` are generated. Edit their sources
-(`provisioning/lists.json`, `solution/config/environment-variables.json`) and
-regenerate; CI fails if they drift.
-
-## Status
-
-The design is complete and reviewed. The artefacts are hand-authored source that
-has never been imported into a tenant. The
-[bring-up order in solution/README.md](solution/README.md#bring-up-order) is the
-next step, and it starts small on a test site deliberately.
+The repository is statically complete and packable. Importing into a tenant,
+binding connections and performing the live D1-D7 acceptance sequence require
+the target Power Platform/SharePoint environment and are intentionally handled
+separately.

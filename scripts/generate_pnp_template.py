@@ -29,6 +29,15 @@ OUTPUT_FILE = os.path.join(ROOT, "provisioning", "pnp-provisioning-template.xml"
 # seed makes generation deterministic.
 GUID_SEED = 20260904
 
+# The original template assigned IDs from the seeded sequence below. New
+# fields must not consume that sequence or every later existing field would
+# receive a different ID on regeneration. Add future fields here with a stable
+# name-derived UUID before inserting them into lists.json.
+ADDED_FIELD_GUIDS = {
+    ("WalkFrontier", "EnumerationPhase"): "{f3547849-2446-506f-864d-fb7cf0b80533}",
+    ("WalkFrontier", "NextPageUri"): "{c229a32c-8a2b-557e-881a-5561eda0107c}",
+}
+
 FIELD_TYPES = {
     "Text": "Text",
     "Note": "Note",
@@ -70,7 +79,7 @@ def render():
 
     rng = random.Random(GUID_SEED)
 
-    def guid():
+    def legacy_guid():
         return "{%s}" % uuid.UUID(int=rng.getrandbits(128), version=4)
 
     lines = [HEADER]
@@ -88,8 +97,9 @@ def render():
 
         for column in definition["columns"]:
             field_type = FIELD_TYPES[column["type"]]
+            field_id = ADDED_FIELD_GUIDS.get((name, column["name"]))
             attributes = [
-                'ID="%s"' % guid(),
+                'ID="%s"' % (field_id or legacy_guid()),
                 'Name="%s"' % column["name"],
                 'StaticName="%s"' % column["name"],
                 'DisplayName="%s"' % column["name"],

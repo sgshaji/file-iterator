@@ -12,6 +12,11 @@
       "//": "The library's URL name, which is frequently different from its display name (Documents vs Shared Documents). Use the value in the browser address bar."
     },
     {
+      "SchemaName": "fi_WebServerRelativeUrl",
+      "Value": "",
+      "//": "Server-relative URL of the SharePoint web, with a leading slash and no trailing slash. Prefixes connector trigger tokens, which omit the /sites/<web> segment."
+    },
+    {
       "SchemaName": "fi_RootFolderPath",
       "Value": "",
       "//": "Server-relative path of the source root. The walk starts here."
@@ -38,8 +43,8 @@
     },
     {
       "SchemaName": "fi_SourceExtensions",
-      "Value": "[\".docx\",\".doc\",\".pdf\"]",
-      "//": "JSON array of lower-case extensions eligible for regeneration."
+      "Value": "[\".pdf\",\".docx\"]",
+      "//": "JSON array of lower-case extensions supported by the deployed PD Conversion Assistant skill. Legacy .doc files must be migrated to .docx before entering the source tree."
     },
     {
       "SchemaName": "fi_BatchSize",
@@ -47,14 +52,9 @@
       "//": "Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot."
     },
     {
-      "SchemaName": "fi_ScheduleIntervalMinutes",
-      "Value": "15",
-      "//": "Flow B recurrence. THROTTLE 2 OF 2. Together with BatchSize this paces both the 600 calls/min connector limit and agent capacity consumption. NOTE: Power Automate recurrence triggers do not accept an expression, so this value must be applied to the trigger by hand (or by the deployment pipeline) rather than being read at runtime. It is declared here so the intended value is versioned and reviewable."
-    },
-    {
-      "SchemaName": "fi_MaxAttempts",
-      "Value": "3",
-      "//": "Retry ceiling per work item, after which it is parked as Failed for human review. Unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight."
+      "SchemaName": "fi_PlanningPageSize",
+      "Value": "200",
+      "//": "DocumentIndex rows consumed per planner run. Keeps planning below the 16 MB per-action output cap while guaranteeing eventual coverage beyond 5,000 rows."
     },
     {
       "SchemaName": "fi_MaxDocumentsPerRun",
@@ -72,14 +72,9 @@
       "//": "Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size."
     },
     {
-      "SchemaName": "fi_MinOutputSizeRatio",
-      "Value": "0.2",
-      "//": "Generated output smaller than this fraction of the source is rejected as truncated. Validation runs BEFORE any write."
-    },
-    {
-      "SchemaName": "fi_MaxOutputSizeRatio",
-      "Value": "5.0",
-      "//": "Generated output larger than this multiple of the source is rejected as runaway."
+      "SchemaName": "fi_RollbackPageSize",
+      "Value": "25",
+      "//": "Side-effect manifests restored per rollback worker run."
     },
     {
       "SchemaName": "fi_DryRun",
@@ -87,19 +82,9 @@
       "//": "When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan."
     },
     {
-      "SchemaName": "fi_EnableConcurrency",
-      "Value": "false",
-      "//": "Off by default. Parallel invocation multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic. Enable only after measurement. NOTE: loop concurrency is a design-time runtimeConfiguration setting and cannot be bound to an expression, so this must be applied to the loop by hand. It is declared here so the intended value is versioned and reviewable."
-    },
-    {
-      "SchemaName": "fi_NotificationRecipient",
-      "Value": "",
-      "//": "Recipient for approval requests, run summaries and failure alerts."
-    },
-    {
-      "SchemaName": "fi_AgentEndpointName",
-      "Value": "",
-      "//": "Identifier of the Copilot Studio agent action invoked per document. The single metered operation in the solution."
+      "SchemaName": "fi_AgentId",
+      "Value": "cree1_pdconversionassistant_08zNQw",
+      "//": "Schema name of the existing PD Conversion Assistant agent invoked through shared_agentnode/InvokeAgent. The agent is referenced, not copied into this solution."
     },
     {
       "SchemaName": "fi_IndexListName",
@@ -120,6 +105,11 @@
       "SchemaName": "fi_WalkFrontierListName",
       "Value": "WalkFrontier",
       "//": "Holds the folder walk frontier. Persisted rather than held in an array variable so the walk is resumable, observable, and immune to the 16 MB action output cap."
+    },
+    {
+      "SchemaName": "fi_IndexWalkRunListName",
+      "Value": "IndexWalkRun",
+      "//": "Tracks whether a full backfill and stale-row reconciliation completed successfully."
     }
   ],
   "ConnectionReferences": [
@@ -130,16 +120,10 @@
       "//": "Fill in the SharePoint (regeneration solution) connection id from the test environment."
     },
     {
-      "LogicalName": "fi_sharedapprovals",
+      "LogicalName": "fi_sharedagentnode",
       "ConnectionId": "",
-      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_approvals",
-      "//": "Fill in the Approvals (regeneration solution) connection id from the test environment."
-    },
-    {
-      "LogicalName": "fi_sharedoffice365",
-      "ConnectionId": "",
-      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_office365",
-      "//": "Fill in the Office 365 Outlook (regeneration solution) connection id from the test environment."
+      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_agentnode",
+      "//": "Fill in the Agent (regeneration solution) connection id from the test environment."
     }
   ]
 }

@@ -53,8 +53,29 @@ jobs:
       - name: Verify deployment settings match environment-variables.json
         run: python3 scripts/generate_deployment_settings.py --check
 
+      - name: Verify solution shell matches source configuration
+        run: python3 scripts/generate_solution_shell.py --check
+
+      - name: Verify planning flows match the paged planner generator
+        run: python3 scripts/generate_planning_flows.py --check
+
+      - name: Verify processing flow matches the agent contract generator
+        run: python3 scripts/generate_processing_flow.py --check
+
+      - name: Verify rollback flow matches the agent result generator
+        run: python3 scripts/generate_rollback_flow.py --check
+
+      - name: Verify finalization flow matches the paged counter generator
+        run: python3 scripts/generate_finalization_flow.py --check
+
+      - name: Verify folder-update reconciliation flow
+        run: python3 scripts/generate_folder_update_flow.py --check
+
       - name: Validate flow definitions, columns and configuration
         run: python3 scripts/validate_solution.py
+
+      - name: Validate requirements R1-R7
+        run: python3 scripts/validate_requirements.py
 
   deploy:
     name: Pack and import
@@ -67,6 +88,21 @@ jobs:
 
       - name: Install Power Platform tools
         uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Resolve target deployment settings
+        shell: pwsh
+        env:
+          FI_SITE_ADDRESS: ${{ vars.FI_SITE_ADDRESS }}
+          FI_WEB_SERVER_RELATIVE_URL: ${{ vars.FI_WEB_SERVER_RELATIVE_URL }}
+          FI_LIBRARY_URL_NAME: ${{ vars.FI_LIBRARY_URL_NAME }}
+          FI_ROOT_FOLDER_PATH: ${{ vars.FI_ROOT_FOLDER_PATH }}
+          FI_TEMPLATE_FOLDER_PATH: ${{ vars.FI_TEMPLATE_FOLDER_PATH }}
+          FI_SHAREPOINT_CONNECTION_ID: ${{ vars.FI_SHAREPOINT_CONNECTION_ID }}
+          FI_AGENT_CONNECTION_ID: ${{ vars.FI_AGENT_CONNECTION_ID }}
+        run: >
+          python scripts/materialize_deployment_settings.py
+          --input solution/config/deployment-settings.${{ inputs.target }}.json
+          --output out/deployment-settings.resolved.json
 
       - name: Pack solution
         uses: microsoft/powerplatform-actions/pack-solution@v1
@@ -87,7 +123,8 @@ jobs:
           # environment and are supplied by the deployment settings file, not
           # baked into the solution. Never point a test deployment at the
           # production document library.
-          deployment-settings-file: solution/config/deployment-settings.${{ inputs.target }}.json
+          deployment-settings-file: out/deployment-settings.resolved.json
+          use-deployment-settings-file: true
           force-overwrite: true
           run-asynchronously: true
 

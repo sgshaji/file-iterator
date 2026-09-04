@@ -1,0 +1,329 @@
+{
+  "$comment": "FLOW F2 - Index Delete. Marks a deleted library item excluded by its stable list item ID. Full backfill reconciliation remains the safety net for missed events.",
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "fi_sharedsharepointonline"
+        },
+        "api": {
+          "name": "shared_sharepointonline"
+        }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
+      },
+      "triggers": {
+        "When_a_file_is_deleted": {
+          "type": "OpenApiConnection",
+          "recurrence": {
+            "frequency": "Minute",
+            "interval": 5
+          },
+          "splitOn": "@triggerOutputs()?['body/value']",
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          },
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetOnDeletedFileItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_LibraryUrlName (fi_LibraryUrlName)')",
+              "folderPath": "@parameters('fi_RootFolderPath (fi_RootFolderPath)')"
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        }
+      },
+      "actions": {
+        "HANDLE_deleted_folder": {
+          "runAfter": {},
+          "type": "If",
+          "expression": {
+            "equals": [
+              "@triggerOutputs()?['body/IsFolder']",
+              true
+            ]
+          },
+          "actions": {
+            "Get_active_walk": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "GetItems",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                  "$filter": "Status eq 'Seeding' or Status eq 'Queued' or Status eq 'Running' or Status eq 'Reconciling'",
+                  "$top": 2
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Start_reconciliation_if_idle": {
+              "runAfter": {
+                "Get_active_walk": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If",
+              "expression": {
+                "less": [
+                  "@length(body('Get_active_walk')?['value'])",
+                  2
+                ]
+              },
+              "actions": {
+                "Compose_walk_run_id": {
+                  "runAfter": {},
+                  "type": "Compose",
+                  "inputs": "@guid()"
+                },
+                "Create_walk_run": {
+                  "runAfter": {
+                    "Compose_walk_run_id": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PostItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "item/Title": "@outputs('Compose_walk_run_id')",
+                      "item/WalkRunId": "@outputs('Compose_walk_run_id')",
+                      "item/Status/Value": "@{if(equals(length(body('Get_active_walk')?['value']), 0), 'Seeding', 'Queued')}",
+                      "item/ReconciliationCursorId": 0,
+                      "item/StartedAt": "@utcNow()",
+                      "item/ErrorMessage": ""
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Get_root_folder_identity": {
+                  "runAfter": {
+                    "Create_walk_run": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "HttpRequest",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "parameters/method": "GET",
+                      "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{replace(parameters('fi_RootFolderPath (fi_RootFolderPath)'),'''','''''')}')?$select=UniqueId",
+                      "parameters/headers": {
+                        "Accept": "application/json;odata=verbose"
+                      }
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Seed_root_frontier": {
+                  "runAfter": {
+                    "Get_root_folder_identity": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PostItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+                      "item/Title": "@outputs('Compose_walk_run_id')",
+                      "item/WalkRunId": "@outputs('Compose_walk_run_id')",
+                      "item/FolderUrl": "@parameters('fi_RootFolderPath (fi_RootFolderPath)')",
+                      "item/FolderUniqueId": "@body('Get_root_folder_identity')?['d']?['UniqueId']",
+                      "item/Depth": 0,
+                      "item/Status/Value": "Pending"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Activate_seeded_walk": {
+                  "runAfter": {
+                    "Seed_root_frontier": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "id": "@body('Create_walk_run')?['ID']",
+                      "item/Status/Value": "@{if(equals(length(body('Get_active_walk')?['value']), 0), 'Running', 'Queued')}"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Record_root_lookup_failure": {
+                  "runAfter": {
+                    "Get_root_folder_identity": [
+                      "Failed",
+                      "TimedOut"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "id": "@body('Create_walk_run')?['ID']",
+                      "item/Status/Value": "CompletedWithErrors",
+                      "item/CompletedAt": "@utcNow()",
+                      "item/ErrorMessage": "Folder-change reconciliation could not resolve its root folder."
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Record_frontier_write_failure": {
+                  "runAfter": {
+                    "Seed_root_frontier": [
+                      "Failed",
+                      "TimedOut"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexWalkRunListName (fi_IndexWalkRunListName)')",
+                      "id": "@body('Create_walk_run')?['ID']",
+                      "item/Status/Value": "CompletedWithErrors",
+                      "item/CompletedAt": "@utcNow()",
+                      "item/ErrorMessage": "Folder-change reconciliation could not create its root frontier row."
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "else": {
+                "actions": {}
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          },
+          "description": "A folder deletion produces one event for the folder, not its descendants. Start a complete bounded walk so reconciliation excludes every deleted descendant."
+        },
+        "Find_deleted_index_row": {
+          "runAfter": {
+            "HANDLE_deleted_folder": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+              "$filter": "ListItemId eq @{triggerOutputs()?['body/ID']}",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Exclude_deleted_row": {
+          "runAfter": {
+            "Find_deleted_index_row": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": {
+            "greater": [
+              "@length(body('Find_deleted_index_row')?['value'])",
+              0
+            ]
+          },
+          "actions": {
+            "Mark_deleted": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "PatchItem",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                  "id": "@first(body('Find_deleted_index_row')?['value'])?['ID']",
+                  "item/IsExcluded": true,
+                  "item/IndexedAt": "@utcNow()"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        }
+      },
+      "outputs": {},
+      "description": "Marks deleted files unavailable for planning without scanning the library."
+    },
+    "schemaVersion": "1.0.0.0"
+  }
+}
