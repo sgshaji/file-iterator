@@ -1,0 +1,348 @@
+{
+  "$comment": "FLOW E2 - Index Backfill Worker. Drains a bounded chunk of the walk frontier on each run, then exits. Implements the direct-children folder walk verified in the enumeration investigation section 6.9, with improvements I1 (single expanded call per folder), I2 (GetFolderByServerRelativePath, tolerates # and % in names), I3 (frontier persisted in a list) and I4 (chunked execution). Runs no agent calls and costs nothing but SharePoint reads. See docs/Template-Regeneration-Solution-Design.md section 9.",
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
+        "api": { "name": "shared_sharepointonline" }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": { "defaultValue": {}, "type": "Object" },
+        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+      },
+      "triggers": {
+        "Recurrence": {
+          "type": "Recurrence",
+          "recurrence": { "frequency": "Minute", "interval": 5 },
+          "description": "Drains the frontier a chunk at a time. A tree of 50 folders and a tree of 5,000 behave identically; the latter simply takes more cycles."
+        }
+      },
+      "actions": {
+        "Init_ExcludedFolders": {
+          "runAfter": {},
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "ExcludedFolders",
+                "type": "array",
+                "value": "@json(parameters('fi_ExcludedFolderNames (fi_ExcludedFolderNames)'))"
+              }
+            ]
+          },
+          "description": "Exclusions come from configuration, not from a hardcoded condition, so the customer can change them without editing the flow."
+        },
+        "Init_SourceExtensions": {
+          "runAfter": { "Init_ExcludedFolders": ["Succeeded"] },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "SourceExtensions",
+                "type": "array",
+                "value": "@json(parameters('fi_SourceExtensions (fi_SourceExtensions)'))"
+              }
+            ]
+          }
+        },
+        "Get_pending_frontier_chunk": {
+          "runAfter": { "Init_SourceExtensions": ["Succeeded"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+              "$filter": "Status eq 'Pending'",
+              "$orderby": "Depth asc,ID asc",
+              "$top": "@parameters('fi_WalkFolderChunkSize (fi_WalkFolderChunkSize)')"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "Ordered by Depth so the walk is breadth-first. Status and WalkRunId are indexed columns; without that this query degrades as the list grows."
+        },
+        "Exit_if_frontier_empty": {
+          "runAfter": { "Get_pending_frontier_chunk": ["Succeeded"] },
+          "type": "If",
+          "expression": {
+            "equals": [ "@length(body('Get_pending_frontier_chunk')?['value'])", 0 ]
+          },
+          "actions": {
+            "Terminate_nothing_to_do": {
+              "runAfter": {},
+              "type": "Terminate",
+              "inputs": { "runStatus": "Succeeded" }
+            }
+          },
+          "else": { "actions": {} }
+        },
+        "For_each_folder": {
+          "runAfter": { "Exit_if_frontier_empty": ["Succeeded"] },
+          "type": "Foreach",
+          "foreach": "@body('Get_pending_frontier_chunk')?['value']",
+          "runtimeConfiguration": {
+            "concurrency": { "repetitions": 1 }
+          },
+          "description": "Sequential. Concurrency here multiplies the SharePoint call rate against the 600/min connection limit; raise only after measurement.",
+          "actions": {
+            "Claim_folder": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "PatchItem",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+                  "id": "@items('For_each_folder')?['ID']",
+                  "item/Status/Value": "InProgress"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Enumerate_direct_children": {
+              "runAfter": { "Claim_folder": ["Succeeded"] },
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "HttpRequest",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "parameters/method": "GET",
+                  "parameters/uri": "_api/web/GetFolderByServerRelativePath(decodedurl='@{items('For_each_folder')?['FolderUrl']}')?$expand=Folders,Files&$select=Name,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,Files/ServerRelativeUrl,Files/UniqueId,Files/Length,Files/TimeLastModified",
+                  "parameters/headers": { "Accept": "application/json;odata=verbose" }
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "runtimeConfiguration": {
+                "staticResult": { "staticResultOptions": "Disabled" }
+              },
+              "description": "THE CORE CALL. Direct children only - this uses the folder's internal index and therefore succeeds regardless of library size. A recursive request over the same path would be a full-library scan and would throw SPQueryThrottledException (investigation report section 4.1). $expand returns folders and files in ONE call rather than two (improvement I1). GetFolderByServerRelativePath tolerates # and % in folder names, which the ...ByServerRelativeUrl variant does not (improvement I2). Type plain spaces in this Uri - Power Automate encodes the field, and a pre-encoded %20 becomes %2520 and silently drops the query string (investigation report section 13, lesson 4)."
+            },
+            "Scope_index_children": {
+              "runAfter": { "Enumerate_direct_children": ["Succeeded"] },
+              "type": "Scope",
+              "actions": {
+                "Filter_source_files": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Enumerate_direct_children')?['d']?['Files']?['results']",
+                    "where": "@contains(variables('SourceExtensions'), toLower(concat('.', last(split(item()?['Name'], '.')))))"
+                  }
+                },
+                "For_each_file": {
+                  "runAfter": { "Filter_source_files": ["Succeeded"] },
+                  "type": "Foreach",
+                  "foreach": "@body('Filter_source_files')",
+                  "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                  "actions": {
+                    "Find_existing_index_row": {
+                      "runAfter": {},
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "GetItems",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                          "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                          "$filter": "UniqueId eq '@{items('For_each_file')?['UniqueId']}'",
+                          "$top": 1
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      },
+                      "description": "Keyed on UniqueId, not path. Paths change on folder rename; a path key silently creates duplicate rows, and a duplicate row means a duplicate agent call and duplicate cost."
+                    },
+                    "Compose_index_row": {
+                      "runAfter": { "Find_existing_index_row": ["Succeeded"] },
+                      "type": "Compose",
+                      "inputs": {
+                        "UniqueId": "@items('For_each_file')?['UniqueId']",
+                        "FileName": "@items('For_each_file')?['Name']",
+                        "ServerRelativeUrl": "@items('For_each_file')?['ServerRelativeUrl']",
+                        "ParentFolderUrl": "@items('For_each_folder')?['FolderUrl']",
+                        "Extension": "@toLower(concat('.', last(split(items('For_each_file')?['Name'], '.'))))",
+                        "SizeBytes": "@int(coalesce(items('For_each_file')?['Length'], 0))",
+                        "TimeLastModified": "@items('For_each_file')?['TimeLastModified']",
+                        "Depth": "@items('For_each_folder')?['Depth']",
+                        "DocumentRole": "@if(endsWith(items('For_each_folder')?['FolderUrl'], concat('/', parameters('fi_OutputFolderName (fi_OutputFolderName)'))), 'Output', if(endsWith(items('For_each_folder')?['FolderUrl'], concat('/', parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)'))), 'Archived', if(equals(items('For_each_folder')?['FolderUrl'], parameters('fi_TemplateFolderPath (fi_TemplateFolderPath)')), 'Template', 'Source')))",
+                        "WalkRunId": "@items('For_each_folder')?['WalkRunId']"
+                      },
+                      "description": "DocumentRole is derived from the containing folder. Outputs and archived versions are indexed but never selected as regeneration sources."
+                    },
+                    "Upsert_index_row": {
+                      "runAfter": { "Compose_index_row": ["Succeeded"] },
+                      "type": "If",
+                      "expression": {
+                        "equals": [ "@length(body('Find_existing_index_row')?['value'])", 0 ]
+                      },
+                      "actions": {
+                        "Create_index_row": {
+                          "runAfter": {},
+                          "type": "OpenApiConnection",
+                          "inputs": {
+                            "host": {
+                              "connectionName": "shared_sharepointonline",
+                              "operationId": "PostItem",
+                              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                            },
+                            "parameters": {
+                              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                              "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                              "item/Title": "@outputs('Compose_index_row')?['FileName']",
+                              "item/UniqueId": "@outputs('Compose_index_row')?['UniqueId']",
+                              "item/FileName": "@outputs('Compose_index_row')?['FileName']",
+                              "item/ServerRelativeUrl": "@outputs('Compose_index_row')?['ServerRelativeUrl']",
+                              "item/ParentFolderUrl": "@outputs('Compose_index_row')?['ParentFolderUrl']",
+                              "item/Extension": "@outputs('Compose_index_row')?['Extension']",
+                              "item/SizeBytes": "@outputs('Compose_index_row')?['SizeBytes']",
+                              "item/TimeLastModified": "@outputs('Compose_index_row')?['TimeLastModified']",
+                              "item/Depth": "@outputs('Compose_index_row')?['Depth']",
+                              "item/DocumentRole/Value": "@outputs('Compose_index_row')?['DocumentRole']",
+                              "item/LastSeenRunId": "@outputs('Compose_index_row')?['WalkRunId']",
+                              "item/IsExcluded": false,
+                              "item/IndexedAt": "@utcNow()"
+                            },
+                            "authentication": "@parameters('$authentication')"
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Update_index_row": {
+                            "runAfter": {},
+                            "type": "OpenApiConnection",
+                            "inputs": {
+                              "host": {
+                                "connectionName": "shared_sharepointonline",
+                                "operationId": "PatchItem",
+                                "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                              },
+                              "parameters": {
+                                "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                                "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                                "id": "@first(body('Find_existing_index_row')?['value'])?['ID']",
+                                "item/ServerRelativeUrl": "@outputs('Compose_index_row')?['ServerRelativeUrl']",
+                                "item/ParentFolderUrl": "@outputs('Compose_index_row')?['ParentFolderUrl']",
+                                "item/SizeBytes": "@outputs('Compose_index_row')?['SizeBytes']",
+                                "item/TimeLastModified": "@outputs('Compose_index_row')?['TimeLastModified']",
+                                "item/Depth": "@outputs('Compose_index_row')?['Depth']",
+                                "item/DocumentRole/Value": "@outputs('Compose_index_row')?['DocumentRole']",
+                                "item/LastSeenRunId": "@outputs('Compose_index_row')?['WalkRunId']",
+                                "item/IndexedAt": "@utcNow()"
+                              },
+                              "authentication": "@parameters('$authentication')"
+                            },
+                            "description": "TemplateName and TemplateFingerprint are deliberately NOT overwritten here. They are stamped by Flow B when a document is generated, and cost filters F1 and F3 depend on them surviving a re-walk."
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "Filter_child_folders": {
+                  "runAfter": { "For_each_file": ["Succeeded"] },
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Enumerate_direct_children')?['d']?['Folders']?['results']",
+                    "where": "@and(not(contains(variables('ExcludedFolders'), item()?['Name'])), not(equals(item()?['Name'], 'Forms')))"
+                  },
+                  "description": "Exclusions are applied BEFORE enqueueing, so an excluded subtree is never requested at all - a subtree of any size costs nothing. 'Forms' is SharePoint's own hidden folder present in every library."
+                },
+                "For_each_child_folder": {
+                  "runAfter": { "Filter_child_folders": ["Succeeded"] },
+                  "type": "Foreach",
+                  "foreach": "@body('Filter_child_folders')",
+                  "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                  "actions": {
+                    "Enqueue_child_folder": {
+                      "runAfter": {},
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "PostItem",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                          "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+                          "item/Title": "@items('For_each_child_folder')?['Name']",
+                          "item/WalkRunId": "@items('For_each_folder')?['WalkRunId']",
+                          "item/FolderUrl": "@items('For_each_child_folder')?['ServerRelativeUrl']",
+                          "item/Depth": "@add(int(items('For_each_folder')?['Depth']), 1)",
+                          "item/Status/Value": "Pending"
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      },
+                      "description": "Depth is unbounded. The frontier grows and drains; the walk ends when no Pending rows remain."
+                    }
+                  }
+                },
+                "Mark_folder_visited": {
+                  "runAfter": { "For_each_child_folder": ["Succeeded"] },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PatchItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+                      "id": "@items('For_each_folder')?['ID']",
+                      "item/Status/Value": "Visited",
+                      "item/VisitedAt": "@utcNow()"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              }
+            },
+            "Record_folder_failure": {
+              "runAfter": { "Scope_index_children": ["Failed", "TimedOut"] },
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "PatchItem",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+                  "id": "@items('For_each_folder')?['ID']",
+                  "item/Status/Value": "Failed",
+                  "item/ErrorMessage": "@{string(result('Scope_index_children'))}"
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "description": "One folder's failure must never abort the chunk. The most likely cause is a single folder holding more than 5,000 direct children, which throttles its own call; that folder needs splitting or an indexed column."
+            }
+          }
+        }
+      },
+      "outputs": {}
+    }
+  },
+  "schemaVersion": "1.0.0.0"
+}

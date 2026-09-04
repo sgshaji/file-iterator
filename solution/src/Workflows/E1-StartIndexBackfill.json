@@ -1,0 +1,121 @@
+{
+  "$comment": "FLOW E1 - Start Index Backfill. Creates a walk run and seeds the frontier with the root folder. Does no enumeration itself; Flow E2 drains the frontier on a schedule. Splitting start from worker is what makes the walk chunked, resumable and bounded in run duration regardless of tree size. See docs/Template-Regeneration-Solution-Design.md section 9.",
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
+        "api": { "name": "shared_sharepointonline" }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": { "defaultValue": {}, "type": "Object" },
+        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+      },
+      "triggers": {
+        "manual": {
+          "type": "Request",
+          "kind": "Button",
+          "inputs": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "title": "Reason",
+                  "type": "string",
+                  "x-ms-content-hint": "TEXT",
+                  "description": "Why this backfill is being run. Recorded for audit."
+                }
+              },
+              "required": []
+            }
+          }
+        }
+      },
+      "actions": {
+        "Init_WalkRunId": {
+          "runAfter": {},
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              { "name": "WalkRunId", "type": "string", "value": "@{guid()}" }
+            ]
+          }
+        },
+        "Check_for_an_unfinished_walk": {
+          "runAfter": { "Init_WalkRunId": ["Succeeded"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+              "$filter": "Status eq 'Pending' or Status eq 'InProgress'",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "description": "A second concurrent walk would duplicate index writes and waste SharePoint calls. Refuse to start if one is already in flight."
+        },
+        "Refuse_if_a_walk_is_already_running": {
+          "runAfter": { "Check_for_an_unfinished_walk": ["Succeeded"] },
+          "type": "If",
+          "expression": {
+            "greater": [
+              "@length(body('Check_for_an_unfinished_walk')?['value'])",
+              0
+            ]
+          },
+          "actions": {
+            "Terminate_walk_already_running": {
+              "runAfter": {},
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "WalkAlreadyInProgress",
+                  "message": "A backfill is already in progress. Wait for it to finish, or clear the WalkFrontier list. Failing loudly rather than returning silently - see investigation report section 13, lesson 3."
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Seed_frontier_with_root_folder": {
+                "runAfter": {},
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_sharepointonline",
+                    "operationId": "PostItem",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                  },
+                  "parameters": {
+                    "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                    "table": "@parameters('fi_WalkFrontierListName (fi_WalkFrontierListName)')",
+                    "item/Title": "@variables('WalkRunId')",
+                    "item/WalkRunId": "@variables('WalkRunId')",
+                    "item/FolderUrl": "@parameters('fi_RootFolderPath (fi_RootFolderPath)')",
+                    "item/Depth": 0,
+                    "item/Status/Value": "Pending"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                },
+                "description": "One row. Flow E2 expands it breadth-first from here."
+              }
+            }
+          }
+        }
+      },
+      "outputs": {}
+    }
+  },
+  "schemaVersion": "1.0.0.0"
+}

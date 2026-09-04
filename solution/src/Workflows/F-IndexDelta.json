@@ -1,0 +1,201 @@
+{
+  "$comment": "FLOW F - Index Delta. Keeps DocumentIndex current without re-walking the tree. The folder-scoped created/modified trigger is unaffected by library size, so this holds however large the library grows. This is what makes the expensive walk a one-off rather than a per-run cost. See docs/Template-Regeneration-Solution-Design.md section 10.",
+  "properties": {
+    "connectionReferences": {
+      "shared_sharepointonline": {
+        "runtimeSource": "embedded",
+        "connection": { "connectionReferenceLogicalName": "fi_sharedsharepointonline" },
+        "api": { "name": "shared_sharepointonline" }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": { "defaultValue": {}, "type": "Object" },
+        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+      },
+      "triggers": {
+        "When_a_file_is_created_or_modified_properties_only": {
+          "type": "OpenApiConnection",
+          "recurrence": { "frequency": "Minute", "interval": 5 },
+          "splitOn": "@triggerOutputs()?['body/value']",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_sharepointonline",
+              "operationId": "GetOnUpdatedItems",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+            },
+            "parameters": {
+              "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+              "table": "@parameters('fi_LibraryUrlName (fi_LibraryUrlName)')",
+              "folderPath": "@parameters('fi_RootFolderPath (fi_RootFolderPath)')"
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        }
+      },
+      "actions": {
+        "Init_SourceExtensions": {
+          "runAfter": {},
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "SourceExtensions",
+                "type": "array",
+                "value": "@json(parameters('fi_SourceExtensions (fi_SourceExtensions)'))"
+              }
+            ]
+          }
+        },
+        "Init_ExcludedFolders": {
+          "runAfter": { "Init_SourceExtensions": ["Succeeded"] },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "ExcludedFolders",
+                "type": "array",
+                "value": "@json(parameters('fi_ExcludedFolderNames (fi_ExcludedFolderNames)'))"
+              }
+            ]
+          }
+        },
+        "Compose_file_facts": {
+          "runAfter": { "Init_ExcludedFolders": ["Succeeded"] },
+          "type": "Compose",
+          "inputs": {
+            "FileName": "@triggerOutputs()?['body/{FilenameWithExtension}']",
+            "Path": "@triggerOutputs()?['body/{FullPath}']",
+            "ParentFolderUrl": "@triggerOutputs()?['body/{Path}']",
+            "Extension": "@toLower(concat('.', last(split(triggerOutputs()?['body/{FilenameWithExtension}'], '.'))))",
+            "IsFolder": "@triggerOutputs()?['body/{IsFolder}']"
+          }
+        },
+        "Is_this_file_in_scope": {
+          "runAfter": { "Compose_file_facts": ["Succeeded"] },
+          "type": "If",
+          "expression": {
+            "and": [
+              { "equals": [ "@outputs('Compose_file_facts')?['IsFolder']", false ] },
+              { "equals": [ "@contains(variables('SourceExtensions'), outputs('Compose_file_facts')?['Extension'])", true ] }
+            ]
+          },
+          "description": "Folders and out-of-scope extensions are ignored. This trigger fires often; doing nothing cheaply is the common path.",
+          "actions": {
+            "Get_file_identity": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "HttpRequest",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "parameters/method": "GET",
+                  "parameters/uri": "_api/web/GetFileByServerRelativePath(decodedurl='@{triggerOutputs()?['body/{FullPath}']}')?$select=UniqueId,Name,ServerRelativeUrl,Length,TimeLastModified",
+                  "parameters/headers": { "Accept": "application/json;odata=verbose" }
+                },
+                "authentication": "@parameters('$authentication')"
+              },
+              "description": "UniqueId is the index key and the trigger does not supply it directly."
+            },
+            "Find_existing_index_row": {
+              "runAfter": { "Get_file_identity": ["Succeeded"] },
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "GetItems",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                  "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                  "$filter": "UniqueId eq '@{body('Get_file_identity')?['d']?['UniqueId']}'",
+                  "$top": 1
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Compose_document_role": {
+              "runAfter": { "Find_existing_index_row": ["Succeeded"] },
+              "type": "Compose",
+              "inputs": "@if(endsWith(outputs('Compose_file_facts')?['ParentFolderUrl'], concat('/', parameters('fi_OutputFolderName (fi_OutputFolderName)'))), 'Output', if(endsWith(outputs('Compose_file_facts')?['ParentFolderUrl'], concat('/', parameters('fi_ArchiveFolderName (fi_ArchiveFolderName)'))), 'Archived', if(startsWith(outputs('Compose_file_facts')?['ParentFolderUrl'], parameters('fi_TemplateFolderPath (fi_TemplateFolderPath)')), 'Template', 'Source')))"
+            },
+            "Upsert_index_row": {
+              "runAfter": { "Compose_document_role": ["Succeeded"] },
+              "type": "If",
+              "expression": {
+                "equals": [ "@length(body('Find_existing_index_row')?['value'])", 0 ]
+              },
+              "actions": {
+                "Create_index_row": {
+                  "runAfter": {},
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_sharepointonline",
+                      "operationId": "PostItem",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                    },
+                    "parameters": {
+                      "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                      "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                      "item/Title": "@body('Get_file_identity')?['d']?['Name']",
+                      "item/UniqueId": "@body('Get_file_identity')?['d']?['UniqueId']",
+                      "item/FileName": "@body('Get_file_identity')?['d']?['Name']",
+                      "item/ServerRelativeUrl": "@body('Get_file_identity')?['d']?['ServerRelativeUrl']",
+                      "item/ParentFolderUrl": "@outputs('Compose_file_facts')?['ParentFolderUrl']",
+                      "item/Extension": "@outputs('Compose_file_facts')?['Extension']",
+                      "item/SizeBytes": "@int(coalesce(body('Get_file_identity')?['d']?['Length'], 0))",
+                      "item/TimeLastModified": "@body('Get_file_identity')?['d']?['TimeLastModified']",
+                      "item/DocumentRole/Value": "@outputs('Compose_document_role')",
+                      "item/IsExcluded": "@contains(variables('ExcludedFolders'), last(split(outputs('Compose_file_facts')?['ParentFolderUrl'], '/')))",
+                      "item/IndexedAt": "@utcNow()"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Update_index_row": {
+                    "runAfter": {},
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_sharepointonline",
+                        "operationId": "PatchItem",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                      },
+                      "parameters": {
+                        "dataset": "@parameters('fi_SiteAddress (fi_SiteAddress)')",
+                        "table": "@parameters('fi_IndexListName (fi_IndexListName)')",
+                        "id": "@first(body('Find_existing_index_row')?['value'])?['ID']",
+                        "item/ServerRelativeUrl": "@body('Get_file_identity')?['d']?['ServerRelativeUrl']",
+                        "item/ParentFolderUrl": "@outputs('Compose_file_facts')?['ParentFolderUrl']",
+                        "item/SizeBytes": "@int(coalesce(body('Get_file_identity')?['d']?['Length'], 0))",
+                        "item/TimeLastModified": "@body('Get_file_identity')?['d']?['TimeLastModified']",
+                        "item/DocumentRole/Value": "@outputs('Compose_document_role')",
+                        "item/IndexedAt": "@utcNow()"
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    },
+                    "description": "TemplateName and TemplateFingerprint are not touched. Only Flow B sets them, and cost filters F1/F3 depend on them."
+                  }
+                }
+              }
+            }
+          },
+          "else": { "actions": {} }
+        }
+      },
+      "outputs": {}
+    }
+  },
+  "schemaVersion": "1.0.0.0"
+}
