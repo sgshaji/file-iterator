@@ -1,5 +1,17 @@
 # Solution source — verification status
 
+> **SUPERSEDED — see [`harness/`](../harness/) for the flow to run now.**
+>
+> This design was built *before* the reference solution export was available. Its
+> architecture is sound at scale, but its agent invocation used a guessed
+> child-flow placeholder; the export later proved the real mechanism is the
+> `shared_agentnode` connector's `InvokeAgent` operation, addressing the agent by
+> schema name.
+>
+> Retained deliberately, not deleted: this is the scale-out design to return to
+> when the harness outgrows a single sequential pass. See
+> [`docs/Reference-Solution-Analysis.md`](../docs/Reference-Solution-Analysis.md).
+
 Read this before importing anything.
 
 ## What this is

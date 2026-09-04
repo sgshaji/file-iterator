@@ -27,6 +27,7 @@ Two things make this harder than it sounds:
 | Document | What it is |
 |---|---|
 | [docs/Template-Regeneration-Solution-Design.md](docs/Template-Regeneration-Solution-Design.md) | **The current design.** Cost-first architecture: index, plan, queue, batch, archive, rollback. Start here. |
+| [docs/Reference-Solution-Analysis.md](docs/Reference-Solution-Analysis.md) | What the deployed solution actually contains, reverse-engineered from the export: the agent is an *environment resource the flow references*, not a component it owns; plus the eleven confirmed defects the harness is built to avoid — and one I withdrew after the skill contract proved me wrong. |
 | [docs/SharePoint-Large-Library-File-Enumeration-Investigation.md](docs/SharePoint-Large-Library-File-Enumeration-Investigation.md) | The prior investigation. Source of every platform constraint the design obeys — the threshold behaviour, the 16 MB action cap, the 600 calls/min connector limit, and the verified folder-walk method. |
 | [docs/Power Automate - SharePoint Folder Files - Customer Test Guide.docx](<docs/Power Automate - SharePoint Folder Files - Customer Test Guide.docx>) | **Superseded (v1).** Teaches a method the investigation report itself records as throttling on a large library. Kept for history only; do not hand it to a customer. |
 
@@ -34,7 +35,9 @@ Two things make this harder than it sounds:
 
 | Path | What it is |
 |---|---|
-| [solution/](solution/) | Unpacked Power Platform solution: seven flow definitions plus configuration. **[Read solution/README.md for verification status](solution/README.md) — nothing here has been imported or executed.** |
+| [harness/](harness/) | **The current implementation.** A harness for the existing PD Conversion Assistant agent: direct-children folder walk, an explicit plan, a dry-run cost gate, one agent call per position folder, and a terminal status derived from what the agent actually returned. **[Read harness/README.md](harness/README.md) for verification status and bring-up order.** |
+| [reference-solution/](reference-solution/) | **Read-only.** The exported Power Platform solution for the deployed agent. The source of truth for the agent's schema name, its invocation mechanism and the `pd-ad-conversion` skill contract. Replaced only by re-exporting; CI enforces this. |
+| [solution/](solution/) | **Superseded.** Earlier seven-flow design, built before the reference export existed. Retained as the scale-out design. [Verification status](solution/README.md). |
 | [provisioning/lists.json](provisioning/lists.json) | Single source of truth for the four supporting SharePoint lists. |
 | [provisioning/pnp-provisioning-template.xml](provisioning/pnp-provisioning-template.xml) | Generated from `lists.json`; applied with `Invoke-PnPSiteTemplate`. |
 | [scripts/](scripts/) | Generators and the static validator that CI runs. |
