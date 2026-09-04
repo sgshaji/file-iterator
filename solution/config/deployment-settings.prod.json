@@ -1,0 +1,145 @@
+{
+  "//": "Deployment settings for the prod environment. GENERATED FILE. Regenerate with scripts/generate_deployment_settings.py. Empty values must be supplied before import; do not commit tenant URLs, connection ids or recipient addresses.",
+  "EnvironmentVariables": [
+    {
+      "SchemaName": "fi_SiteAddress",
+      "Value": "",
+      "//": "Site containing the document library. No trailing path beyond the site name."
+    },
+    {
+      "SchemaName": "fi_LibraryUrlName",
+      "Value": "Shared Documents",
+      "//": "The library's URL name, which is frequently different from its display name (Documents vs Shared Documents). Use the value in the browser address bar."
+    },
+    {
+      "SchemaName": "fi_RootFolderPath",
+      "Value": "",
+      "//": "Server-relative path of the source root. The walk starts here."
+    },
+    {
+      "SchemaName": "fi_TemplateFolderPath",
+      "Value": "",
+      "//": "Server-relative path of the template folder. MUST be disjoint from the output folder, otherwise the solution's own writes re-trigger Flow A."
+    },
+    {
+      "SchemaName": "fi_OutputFolderName",
+      "Value": "AD Documents",
+      "//": "Folder that receives regenerated documents. Never walked as a source, but paths are computed into it."
+    },
+    {
+      "SchemaName": "fi_ArchiveFolderName",
+      "Value": "Archive",
+      "//": "Folder that receives the previous version of every overwritten output. Never walked as a source."
+    },
+    {
+      "SchemaName": "fi_ExcludedFolderNames",
+      "Value": "[\"Archive\",\"AD Documents\"]",
+      "//": "JSON array of folder names never walked as sources, wherever they appear in the tree. Held as configuration so exclusions can change without editing the flow. Excluded subtrees are dropped before enqueueing, so a subtree of any size costs nothing."
+    },
+    {
+      "SchemaName": "fi_SourceExtensions",
+      "Value": "[\".docx\",\".doc\",\".pdf\"]",
+      "//": "JSON array of lower-case extensions eligible for regeneration."
+    },
+    {
+      "SchemaName": "fi_BatchSize",
+      "Value": "5",
+      "//": "Documents claimed per Flow B run. THROTTLE 1 OF 2. Set from measured worst-case agent latency, not the average: one slow document stalls a sequential loop. Starts deliberately low for the pilot."
+    },
+    {
+      "SchemaName": "fi_ScheduleIntervalMinutes",
+      "Value": "15",
+      "//": "Flow B recurrence. THROTTLE 2 OF 2. Together with BatchSize this paces both the 600 calls/min connector limit and agent capacity consumption. NOTE: Power Automate recurrence triggers do not accept an expression, so this value must be applied to the trigger by hand (or by the deployment pipeline) rather than being read at runtime. It is declared here so the intended value is versioned and reviewable."
+    },
+    {
+      "SchemaName": "fi_MaxAttempts",
+      "Value": "3",
+      "//": "Retry ceiling per work item, after which it is parked as Failed for human review. Unbounded retry on a deterministic failure is the classic way to exhaust a quota overnight."
+    },
+    {
+      "SchemaName": "fi_MaxDocumentsPerRun",
+      "Value": "50",
+      "//": "CIRCUIT BREAKER. Above this count the run is held for a second, deliberate confirmation. Stops a wrong template or a misconfigured filter becoming a large bill."
+    },
+    {
+      "SchemaName": "fi_StaleClaimMinutes",
+      "Value": "60",
+      "//": "Items left InProgress beyond this are reset to Pending at the start of each cycle. Without reaping, a crashed batch strands its claimed items forever."
+    },
+    {
+      "SchemaName": "fi_WalkFolderChunkSize",
+      "Value": "100",
+      "//": "Folders processed per Flow E run before re-queueing and exiting. Keeps any single run well inside the duration limit regardless of tree size."
+    },
+    {
+      "SchemaName": "fi_MinOutputSizeRatio",
+      "Value": "0.2",
+      "//": "Generated output smaller than this fraction of the source is rejected as truncated. Validation runs BEFORE any write."
+    },
+    {
+      "SchemaName": "fi_MaxOutputSizeRatio",
+      "Value": "5.0",
+      "//": "Generated output larger than this multiple of the source is rejected as runaway."
+    },
+    {
+      "SchemaName": "fi_DryRun",
+      "Value": "true",
+      "//": "When true, Flow A plans work items for inspection and the run is never executed. Zero agent cost. DEFAULTS TO TRUE so a fresh deployment cannot regenerate documents before anyone has looked at the plan."
+    },
+    {
+      "SchemaName": "fi_EnableConcurrency",
+      "Value": "false",
+      "//": "Off by default. Parallel invocation multiplies capacity burn rate and makes double-processing possible unless claiming is genuinely atomic. Enable only after measurement. NOTE: loop concurrency is a design-time runtimeConfiguration setting and cannot be bound to an expression, so this must be applied to the loop by hand. It is declared here so the intended value is versioned and reviewable."
+    },
+    {
+      "SchemaName": "fi_NotificationRecipient",
+      "Value": "",
+      "//": "Recipient for approval requests, run summaries and failure alerts."
+    },
+    {
+      "SchemaName": "fi_AgentEndpointName",
+      "Value": "",
+      "//": "Identifier of the Copilot Studio agent action invoked per document. The single metered operation in the solution."
+    },
+    {
+      "SchemaName": "fi_IndexListName",
+      "Value": "DocumentIndex",
+      "//": "Name of the document index list. Parameterised so a test deployment can point at its own copy without touching production data."
+    },
+    {
+      "SchemaName": "fi_RunListName",
+      "Value": "RegenerationRun",
+      "//": "Name of the run header list. Parameterised so a test deployment can point at its own copy without touching production data."
+    },
+    {
+      "SchemaName": "fi_WorkItemListName",
+      "Value": "RegenerationWorkItem",
+      "//": "Name of the work queue list. Parameterised so a test deployment can point at its own copy without touching production data."
+    },
+    {
+      "SchemaName": "fi_WalkFrontierListName",
+      "Value": "WalkFrontier",
+      "//": "Holds the folder walk frontier. Persisted rather than held in an array variable so the walk is resumable, observable, and immune to the 16 MB action output cap."
+    }
+  ],
+  "ConnectionReferences": [
+    {
+      "LogicalName": "fi_sharedsharepointonline",
+      "ConnectionId": "",
+      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+      "//": "Fill in the SharePoint (regeneration solution) connection id from the prod environment."
+    },
+    {
+      "LogicalName": "fi_sharedapprovals",
+      "ConnectionId": "",
+      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_approvals",
+      "//": "Fill in the Approvals (regeneration solution) connection id from the prod environment."
+    },
+    {
+      "LogicalName": "fi_sharedoffice365",
+      "ConnectionId": "",
+      "ConnectorId": "/providers/Microsoft.PowerApps/apis/shared_office365",
+      "//": "Fill in the Office 365 Outlook (regeneration solution) connection id from the prod environment."
+    }
+  ]
+}

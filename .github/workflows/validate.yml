@@ -1,0 +1,74 @@
+name: Validate solution source
+
+# Every defect this catches is a defect that would otherwise surface during a
+# live run -- and a live run of this solution spends metered agent capacity and
+# overwrites documents. Cheap checks here are worth a great deal.
+
+on:
+  pull_request:
+    paths:
+      - 'solution/**'
+      - 'provisioning/**'
+      - 'scripts/**'
+      - '.github/workflows/validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'solution/**'
+      - 'provisioning/**'
+      - 'scripts/**'
+      - '.github/workflows/validate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Static validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify provisioning template matches lists.json
+        run: python3 scripts/generate_pnp_template.py --check
+
+      - name: Verify deployment settings match environment-variables.json
+        run: python3 scripts/generate_deployment_settings.py --check
+
+      - name: Validate flow definitions, columns and configuration
+        run: python3 scripts/validate_solution.py
+
+  pack:
+    name: Pack Power Platform solution
+    runs-on: windows-latest
+    needs: validate
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Power Platform tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      # Proves the unpacked source is structurally valid and importable-shaped.
+      # It does not prove the flows run; only an import into a real environment
+      # can do that. See solution/README.md for verification status.
+      - name: Pack solution (unmanaged)
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: solution/src
+          solution-file: out/FileIteratorTemplateRegeneration.zip
+          solution-type: Unmanaged
+
+      - name: Upload solution artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: solution-unmanaged
+          path: out/FileIteratorTemplateRegeneration.zip
+          if-no-files-found: error

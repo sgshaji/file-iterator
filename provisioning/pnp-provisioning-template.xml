@@ -2,7 +2,11 @@
 <pnp:Provisioning xmlns:pnp="http://schemas.dev.office.com/PnP/2022/09/ProvisioningSchema">
   <!--
     PnP provisioning template for the template regeneration solution.
-    Generated from provisioning/lists.json. See docs/Template-Regeneration-Solution-Design.md section 4.
+
+    GENERATED FILE. Do not edit by hand.
+    Source: provisioning/lists.json
+    Regenerate: python3 scripts/generate_pnp_template.py
+    See docs/Template-Regeneration-Solution-Design.md section 4.
 
     Apply with PnP PowerShell:
       Connect-PnPOnline -Url https://<tenant>.sharepoint.com/sites/<site> -Interactive

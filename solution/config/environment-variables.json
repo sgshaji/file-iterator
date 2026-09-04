@@ -191,7 +191,8 @@
       "type": "String",
       "required": true,
       "defaultValue": "DocumentIndex",
-      "usedBy": ["A", "E", "F"]
+      "usedBy": ["A", "E", "F"],
+      "description": "Name of the document index list. Parameterised so a test deployment can point at its own copy without touching production data."
     },
     {
       "schemaName": "fi_RunListName",
@@ -199,7 +200,8 @@
       "type": "String",
       "required": true,
       "defaultValue": "RegenerationRun",
-      "usedBy": ["A", "B", "C", "D"]
+      "usedBy": ["A", "B", "C", "D"],
+      "description": "Name of the run header list. Parameterised so a test deployment can point at its own copy without touching production data."
     },
     {
       "schemaName": "fi_WorkItemListName",
@@ -207,7 +209,8 @@
       "type": "String",
       "required": true,
       "defaultValue": "RegenerationWorkItem",
-      "usedBy": ["A", "B", "C", "D"]
+      "usedBy": ["A", "B", "C", "D"],
+      "description": "Name of the work queue list. Parameterised so a test deployment can point at its own copy without touching production data."
     },
     {
       "schemaName": "fi_WalkFrontierListName",
