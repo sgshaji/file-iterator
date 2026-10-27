@@ -1,9 +1,27 @@
-# file-iterator
+# SharePoint Document Regeneration
 
 Template-triggered document regeneration in SharePoint, using a Copilot Studio
 agent as a per-document worker and Power Automate as the orchestrator — built on
 top of an investigation into enumerating files in a library past the 5,000-item
 list view threshold.
+
+> **Status:** implementation and investigation with offline static validation. Tenant
+> import and end-to-end execution of the new flows have not been verified. The
+> repository name remains `file-iterator` to preserve existing links.
+
+## Engineering focus
+
+| Delivery constraint | Design response |
+|---|---|
+| Large-library enumeration can hit SharePoint thresholds | Investigate the observed failure path and use bounded direct-children traversal |
+| Agent calls are metered | Plan first, default to dry run, and gate the number of invocations |
+| Regeneration can overwrite useful documents | Separate planning from writes and document archive/rollback in the scale-out design |
+| A successful flow is not necessarily a successful conversion | Derive outcomes from the agent's response, including skipped and unparseable results |
+| Hand-authored flow definitions can hide structural defects | Generate the current harness and validate it against explicit invariants |
+
+**Start here:** [current harness and verification limits](harness/README.md),
+[solution design](docs/Template-Regeneration-Solution-Design.md), and
+[offline checks](#working-on-this-repository).
 
 ## The requirement
 
@@ -14,8 +32,9 @@ document.
 
 Two things make this harder than it sounds:
 
-1. The library is past the list view threshold, so no recursive-by-path method
-   can enumerate it. That is what the investigation report solves.
+1. In the investigated library, recursive-by-path enumeration encountered the
+   list view threshold. The investigation documents the failure and the
+   direct-children approach used in the design.
 2. The agent call is metered and the write is destructive. A naive "loop over
    everything" flow is both expensive and unrecoverable. That is what the
    solution design solves.
@@ -44,6 +63,10 @@ Two things make this harder than it sounds:
 | [.github/workflows/](.github/workflows/) | PR validation and packing; manual, environment-gated deployment. |
 
 ## How the pieces fit
+
+The diagram below describes the **scale-out design** in `solution/`. The current
+`harness/` implementation uses its own resolve, gate, walk, plan, invoke, and
+summary stages; see [the harness walkthrough](harness/README.md#what-it-does).
 
 ```
 template changed
@@ -74,6 +97,9 @@ twice.** Everything else in the design exists to serve that.
 python3 scripts/validate_solution.py              # flows, columns, config
 python3 scripts/generate_pnp_template.py --check  # provisioning drift
 python3 scripts/generate_deployment_settings.py --check
+python3 scripts/check_reference_untouched.py origin/main
+python3 scripts/generate_harness_flow.py --check
+python3 scripts/validate_harness.py
 ```
 
 `provisioning/pnp-provisioning-template.xml` and
@@ -83,7 +109,13 @@ regenerate; CI fails if they drift.
 
 ## Status
 
-The design is complete and reviewed. The artefacts are hand-authored source that
-has never been imported into a tenant. The
-[bring-up order in solution/README.md](solution/README.md#bring-up-order) is the
-next step, and it starts small on a test site deliberately.
+All six offline checks above passed on Windows with Python 3.14.7 on 27 October
+2026. The solution validator reported two expected design-time-only environment
+variables that are declared but not referenced by a flow; the harness validator
+reported zero warnings.
+
+These are static and consistency checks, not a tenant execution. The source has
+not been imported into a tenant or used for an end-to-end conversion from this
+harness. Follow the [current harness bring-up guidance](harness/README.md) on a
+test site before making runtime or scale claims. The earlier scale-out design
+has its own [verification status](solution/README.md).
